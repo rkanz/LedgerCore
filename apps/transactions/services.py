@@ -3,8 +3,10 @@ from decimal import Decimal
 from django.db import transaction
 from django.utils import timezone
 
+from apps.wallets.cache import invalidate_user_wallet_cache
 from apps.wallets.models import Wallet
 
+from .cache import invalidate_user_transaction_cache
 from .models import LedgerEntry, Transaction
 
 
@@ -46,6 +48,18 @@ def deposit(
         new_transaction.status = Transaction.TransactionStatus.COMPLETED
         new_transaction.completed_at = timezone.now()
         new_transaction.save(update_fields=["status", "completed_at"])
+        transaction.on_commit(
+        lambda: invalidate_user_wallet_cache(
+        user_id=wallet.user_id, # pyright: ignore[reportAttributeAccessIssue]
+        wallet_id=wallet.id, # pyright: ignore[reportAttributeAccessIssue]
+                )
+        )
+        transaction.on_commit(
+        lambda: invalidate_user_transaction_cache(
+        user_id=initiated_by.id,
+        transaction_id=new_transaction.id, # pyright: ignore[reportAttributeAccessIssue]
+            )
+        )
         return new_transaction
 
 
@@ -88,6 +102,19 @@ def withdraw(
         new_transaction.status = Transaction.TransactionStatus.COMPLETED
         new_transaction.completed_at = timezone.now()
         new_transaction.save(update_fields=["status", "completed_at"])
+        transaction.on_commit(
+        lambda: invalidate_user_wallet_cache(
+        user_id=wallet.user_id, # pyright: ignore[reportAttributeAccessIssue]
+        wallet_id=wallet.id, # pyright: ignore[reportAttributeAccessIssue]
+            )
+        )
+
+        transaction.on_commit(
+        lambda: invalidate_user_transaction_cache(
+        user_id=initiated_by.id,
+        transaction_id=new_transaction.id, # pyright: ignore[reportAttributeAccessIssue]
+            )
+        )
         return new_transaction
 
 
@@ -164,4 +191,22 @@ def transfer(
         new_transaction.status = Transaction.TransactionStatus.COMPLETED
         new_transaction.completed_at = timezone.now()
         new_transaction.save(update_fields=["status", "completed_at"])
+        transaction.on_commit(
+            lambda:invalidate_user_wallet_cache(
+                user_id=initiated_by.id,
+                wallet_id=source_wallet.id # pyright: ignore[reportAttributeAccessIssue]
+            )
+        )
+        transaction.on_commit(
+            lambda:invalidate_user_wallet_cache(
+                user_id=initiated_by.id,
+                wallet_id=destination_wallet.id # pyright: ignore[reportAttributeAccessIssue]
+            )
+        )
+        transaction.on_commit(
+            lambda:invalidate_user_transaction_cache(
+                user_id=initiated_by,
+                transaction_id=transaction.id # pyright: ignore[reportAttributeAccessIssue]
+            )
+        )
         return new_transaction

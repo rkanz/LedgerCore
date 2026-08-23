@@ -47,6 +47,7 @@ INSTALLED_APPS = [
     "apps.transactions",
     "rest_framework",
     "rest_framework_simplejwt",
+    'drf_spectacular'
 ]
 
 MIDDLEWARE = [
@@ -126,24 +127,37 @@ USE_I18N = True
 USE_TZ = True
 
 
-# Static files (CSS, JavaScript, Images)
-# https://docs.djangoproject.com/en/6.1/howto/static-files/
+
 
 STATIC_URL = "static/"
 
-
-# Email
-# https://docs.djangoproject.com/en/6.1/topics/email/#topic-email-configuration
-
-MAILERS = {
-    "default": {
-        "BACKEND": "django.core.mail.backends.console.EmailBackend",
-    },
-}
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+
+EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+DEFAULT_FROM_EMAIL = "noreply@ledgercore.local"
+
+
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "rest_framework_simplejwt.authentication.JWTAuthentication",
     ),
     "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.IsAuthenticated",),
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }
+SPECTACULAR_SETTINGS = {
+    "TITLE": "LedgerCore API",
+    "DESCRIPTION": "Digital wallet and transaction management API",
+    "VERSION": "1.0.0",
+}
+
+CACHES = {
+    "default": {
+        "BACKEND": "django_redis.cache.RedisCache",
+        "LOCATION": "redis://redis:6379/1",
+        "OPTIONS": {
+            "CLIENT_CLASS": "django_redis.client.DefaultClient",
+        },
+    },
+}
+CELERY_BROKER_URL = "redis://redis:6379/0"
