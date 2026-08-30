@@ -11,6 +11,8 @@ class Wallet(models.Model):
         IRR = "IRR", "Iranian Rial"
         USDT = "USDT", "Tether"
         BTC = "BTC", "Bitcoin"
+        USD= "USD", "US Dollar"
+        EUR = "EUR" , "Euro"
 
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,

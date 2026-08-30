@@ -4,12 +4,12 @@ from django.db import models
 from apps.wallets.models import Wallet
 
 
-# Create your models here.
 class Transaction(models.Model):
     class TransactionType(models.TextChoices):
         DEPOSIT="DEPOSIT","Deposit"
         WITHDRAW="WITHDRAW","Withdraw"
         TRANSFER="TRANSFER","Transfer"
+        EXCHANGE="EXCHANGE","Exchange"
     class TransactionStatus(models.TextChoices):
         PENDING="PENDING","Pending"
         COMPLETED="COMPLETED","Completed"

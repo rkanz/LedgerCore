@@ -20,31 +20,7 @@ def user():
             "password2": "testpassword123",
         }
     )
-@pytest.fixture
-def wallets(user):
-    return {
-        wallet.currency: wallet
-        for wallet in Wallet.objects.filter(user=user)
-    }
 
-@pytest.fixture
-def user_2():
-        return register_user(
-        validated_data={
-            "username": "Bob123",
-            "first_name": "Bob",
-            "last_name": "Test",
-            "email": "bob@test.com",
-            "password1": "testpassword123",
-            "password2": "testpassword123",
-        }
-    )
-@pytest.fixture
-def wallets_2(user_2):
-     return{
-        wallet.currency: wallet
-            for wallet in Wallet.objects.filter(user=user_2)
-     }
 @pytest.fixture
 def api_client(user):
     client = APIClient()
@@ -52,7 +28,35 @@ def api_client(user):
     return client
 
 @pytest.fixture
-def wallet(user):
+def exchange_rates(db):
+    return ExchangeRate.objects.bulk_create(
+        [
+            ExchangeRate(
+                base_currency="EUR",
+                quote_currency="USD",
+                rate="1.17"
+            ),
+            ExchangeRate(
+                base_currency="EUR",
+                quote_currency="USD",
+                rate="1.18"
+                        ),
+            ExchangeRate(
+                base_currency="USD",
+                quote_currency="EUR",
+                rate="0.85"
+                        )
+        ]
+    )
+@pytest.fixture
+def exchange_rate(db):
+    return ExchangeRate.objects.create(
+        base_currency="EUR",
+        quote_currency="USD",
+        rate=Decimal("1.17"),
+    )
+@pytest.fixture
+def wallets(user):
     source_wallet = Wallet.objects.get(
         user=user,
         currency=Wallet.Currency.EUR,
@@ -71,10 +75,4 @@ def wallet(user):
 
     return source_wallet, destination_wallet
 
-@pytest.fixture
-def exchange_rate(db):
-    return ExchangeRate.objects.create(
-        base_currency="EUR",
-        quote_currency="USD",
-        rate=Decimal("1.17"),
-    )
+

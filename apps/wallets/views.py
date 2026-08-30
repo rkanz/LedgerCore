@@ -55,14 +55,14 @@ wallet_list_view = WalletListAPIView.as_view()
 )
 class WalletDetailAPIView(generics.RetrieveAPIView):
     serializer_class=WalletSerializer
-    def list(self,request,*args,**kwargs):
+    def retrieve(self,request,*args,**kwargs):
         cache_key=wallet_detail_cache_key(request.user.id,kwargs["pk"])
         cache_data=cache.get(cache_key)
         if cache_data is not None:
             return Response(cache_data)
         instance=self.get_object()
         serializer=self.get_serializer(instance)
-        cache.set(cache_key,serializer,timeout=WALLET_CACHE_TTL)
+        cache.set(cache_key,serializer.data,timeout=WALLET_CACHE_TTL)
         return Response(serializer.data)
 
     def get_queryset(self):

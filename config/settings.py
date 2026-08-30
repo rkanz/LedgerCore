@@ -47,7 +47,8 @@ INSTALLED_APPS = [
     "apps.transactions",
     "rest_framework",
     "rest_framework_simplejwt",
-    'drf_spectacular'
+    'drf_spectacular',
+    'apps.exchange'
 ]
 
 MIDDLEWARE = [
@@ -161,3 +162,4 @@ CACHES = {
     },
 }
 CELERY_BROKER_URL = "redis://redis:6379/0"
+

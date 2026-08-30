@@ -22,7 +22,7 @@ from apps.wallets.models import Wallet
 from .cache import (
     TRANSACTION_CACHE_TTL,
     transaction_history_cache_key,
-    transaction_history_detail_cache_key
+    transaction_history_detail_cache_key,
 )
 from .serializers import (
     DepositSerializer,
@@ -49,7 +49,7 @@ from .services import deposit, transfer, withdraw
          400:OpenApiResponse(
               description="Invalid request or insufficient balance ."
          ),401:OpenApiResponse(
-              description="Authentication credentials were nor provided."
+              description="Authentication credentials were not provided."
          ),404:OpenApiResponse(
               description="Wallet not found ."
          )
@@ -341,7 +341,13 @@ class TransactionHistoryAPIView(generics.ListAPIView):
             Q(initiated_by=self.request.user)
             |Q(source_wallet__user=self.request.user)
             |Q(destination_wallet__user=self.request.user)
-          ).distinct().order_by("-created_at")
+          ).select_related(
+            "source_wallet",
+            "destination_wallet",
+            "initiated_by",
+            "exchange_details",
+            "exchange_details__exchange_rate",
+        ).distinct().order_by("-created_at")
     def list(self,request,*args,**kwargs):
         cache_key=transaction_history_cache_key(request.user.id,request.get_full_path())
         cached_data=cache.get(cache_key)
@@ -380,7 +386,13 @@ class TransactionHistoryDetailAPIView(generics.RetrieveAPIView):
                     Q(initiated_by=self.request.user)
                     |Q(source_wallet__user=self.request.user)
                     |Q(destination_wallet__user=self.request.user)
-                  ).distinct()
+                  ).select_related(
+            "source_wallet",
+            "destination_wallet",
+            "initiated_by",
+            "exchange_details",
+            "exchange_details__exchange_rate",
+        ).distinct()
     def retrieve(self,request,*args,**kwargs):
         cache_key=transaction_history_detail_cache_key(request.user.id,kwargs["pk"])
         cached_data=cache.get(cache_key)

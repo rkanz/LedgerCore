@@ -1,8 +1,11 @@
+from unittest.mock import patch
+
 import pytest
 from django.urls import reverse
 from rest_framework.test import APIClient
 
 from apps.accounts.services import register_user
+from apps.wallets.cache import wallet_detail_cache_key
 from apps.wallets.models import Wallet
 
 
@@ -51,11 +54,13 @@ def test_wallets_list(user):
     client.force_authenticate(user=user)
     response=client.get(reverse("wallet-list"))
     assert response.status_code == 200 # pyright: ignore[reportAttributeAccessIssue]
-    assert len(response.data) == 3 # pyright: ignore[reportAttributeAccessIssue]
+    assert len(response.data) == 5 # pyright: ignore[reportAttributeAccessIssue]
     assert {wallet["currency"] for wallet in response.data} == { # pyright: ignore[reportAttributeAccessIssue]
         Wallet.Currency.IRR, 
         Wallet.Currency.USDT,
+        Wallet.Currency.USD,
         Wallet.Currency.BTC,
+        Wallet.Currency.EUR,
     }
 
 @pytest.mark.django_db
@@ -85,3 +90,27 @@ def test_wallet_detail_other_user(user,wallets_2):
     other_wallet=wallets_2[Wallet.Currency.USDT]
     response=client.get(reverse("wallet-detail",kwargs={"pk":other_wallet.id}))
     assert response.status_code == 404 # pyright: ignore[reportAttributeAccessIssue]
+
+@pytest.mark.django_db
+def test_wallet_detail_uses_cache(user,wallets):
+    client=APIClient()
+    client.force_authenticate(user=user)
+    wallet=wallets[Wallet.Currency.USDT]
+    with patch(
+        "apps.wallets.views.cache.get",
+        return_value=None,
+    ) as cache_get, patch(
+        "apps.wallets.views.cache.set",
+    ) as cache_set:
+        response=client.get(reverse('wallet-detail',kwargs={
+             'pk':wallet.id
+        }))
+        assert response.status_code == 200 # pyright: ignore[reportAttributeAccessIssue]
+        cache_get.assert_called_once_with(
+        wallet_detail_cache_key(user.id, wallet.id)
+    )
+
+        cache_set.assert_called_once()
+        assert cache_set.call_args.args[1] == response.data # pyright: ignore[reportAttributeAccessIssue]
+
+         

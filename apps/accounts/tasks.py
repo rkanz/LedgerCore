@@ -4,7 +4,11 @@ from django.core.mail import send_mail
 
 User=get_user_model()
 
-@shared_task
+@shared_task(
+    bind=True,
+    max_retries=3,
+    default_retry_delay=60,
+)
 def send_welcome_email(user_id):
     user=User.objects.get(pk=user_id)
     send_mail(

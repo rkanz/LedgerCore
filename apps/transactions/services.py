@@ -205,8 +205,8 @@ def transfer(
         )
         transaction.on_commit(
             lambda:invalidate_user_transaction_cache(
-                user_id=initiated_by,
-                transaction_id=transaction.id # pyright: ignore[reportAttributeAccessIssue]
+                user_id=initiated_by.id,
+                transaction_id=new_transaction.id # pyright: ignore[reportAttributeAccessIssue]
             )
         )
         return new_transaction

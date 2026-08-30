@@ -5,6 +5,7 @@ import pytest
 from django.urls import reverse
 from rest_framework.test import APIClient
 
+from apps.exchange.services import exchange
 from apps.transactions.models import Transaction
 from apps.transactions.services import deposit, withdraw
 from apps.wallets.models import Wallet
@@ -469,3 +470,54 @@ def test_transaction_history_detail_authentication(wallets,user):
                     kwargs={"pk": transaction.id}) # pyright: ignore[reportAttributeAccessIssue]
         )
     assert response.status_code == 401 # pyright: ignore[reportAttributeAccessIssue]
+
+@pytest.mark.django_db
+def test_transaction_history_contains_exchange(api_client,wallet,exchange_rate):
+    source_wallet,destination_wallet=wallet
+    exchange(
+        idempotency_key=uuid.uuid4(),
+        source_wallet=source_wallet,
+        destination_wallet=destination_wallet,
+        amount=Decimal("100"),
+        initiated_by=source_wallet.user,
+    )
+    response=api_client.get(reverse('transactions:transaction-history'))
+    assert response.status_code == 200
+    exchange_data = next(
+        item
+        for item in response.data["results"]
+        if item["transaction_type"] == "EXCHANGE"
+    )
+    assert exchange_data["exchange_details"] is not None
+    assert exchange_data["exchange_details"]["source_currency"] == "EUR"
+    assert exchange_data["exchange_details"]["destination_currency"] == "USD"
+    assert exchange_data["exchange_details"]["source_amount"] == "100.00000000"
+    assert exchange_data["exchange_details"]["destination_amount"] == "116.70750000"
+    assert exchange_data["exchange_details"]["fee_amount"] == "0.29250000"
+
+@pytest.mark.django_db
+def test_transaction_history_detail_contains_exchange(api_client,wallet,exchange_rate):
+    source_wallet,destination_wallet=wallet
+    exchange_transaction=exchange(
+            idempotency_key=uuid.uuid4(),
+            source_wallet=source_wallet,
+            destination_wallet=destination_wallet,
+            amount=Decimal("100"),
+            initiated_by=source_wallet.user,
+    )
+    response=api_client.get(reverse('transactions:transaction-detail',
+        kwargs={'pk':exchange_transaction.id} # pyright: ignore[reportAttributeAccessIssue]
+    ))
+    assert response.status_code == 200
+    assert response.data["transaction_type"] == "EXCHANGE"
+    exchange_data=response.data["exchange_details"]
+    assert exchange_data is not None
+    assert exchange_data["transaction_id"] == exchange_transaction.id # pyright: ignore[reportAttributeAccessIssue]
+    assert exchange_data["source_currency"] == "EUR"
+    assert exchange_data["destination_currency"] == "USD"
+    assert exchange_data["fee_currency"] == "USD"
+    assert exchange_data["exchange_rate_value"] == "1.170000000000"
+    assert exchange_data["source_amount"] == "100.00000000"
+    assert exchange_data["status"] == "COMPLETED"
+    assert exchange_data["destination_amount"] == "116.70750000"
+    assert exchange_data["fee_amount"] == "0.29250000"

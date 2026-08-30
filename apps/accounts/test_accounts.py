@@ -22,14 +22,16 @@ def test_register_api():
     user=User.objects.get(username="newuser")
     assert user.email == "newuser@example.com" # pyright: ignore[reportIndexIssue]
     assert user.check_password("StrongPass123")
-    assert Wallet.objects.filter(user=user).count() == 3
+    assert Wallet.objects.filter(user=user).count() == 5 
     assert set(
-        Wallet.objects.filter(user=user).values_list("currency", flat=True)
-    ) == {
-        Wallet.Currency.IRR,
-        Wallet.Currency.USDT,
-        Wallet.Currency.BTC,
-    }
+    Wallet.objects.filter(user=user).values_list("currency", flat=True)
+) == {
+    Wallet.Currency.IRR,
+    Wallet.Currency.USDT,
+    Wallet.Currency.BTC,
+    Wallet.Currency.USD,
+    Wallet.Currency.EUR,
+}
 
 @pytest.mark.django_db
 def test_password_mismatch():

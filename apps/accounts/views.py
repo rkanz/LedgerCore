@@ -2,6 +2,7 @@ from django.db import transaction
 from drf_spectacular.utils import OpenApiExample, OpenApiResponse, extend_schema
 from rest_framework import generics
 from rest_framework.permissions import AllowAny
+from rest_framework_simplejwt.views import TokenObtainPairView
 
 from .serializers import RegisterSerializer
 from .services import register_user
@@ -46,6 +47,30 @@ class RegisterAPIView(generics.CreateAPIView):
     )
         serializer.instance = user
         transaction.on_commit(
-        lambda:send_welcome_email.delay(user.id) # pyright: ignore[reportAttributeAccessIssue]
+        lambda:send_welcome_email.delay(user.id)   # type: ignore
         )
 register_view=RegisterAPIView.as_view()
+
+@extend_schema(
+    summary="User Login",
+    description="Authenticates the user and return JWT access and refresh tokens.",
+    tags=["Authentication"],
+    examples=[
+        OpenApiExample(
+            "Login Request",
+            value={
+                "username":"testuser",
+                "password":"StrongPassword123"
+            },request_only=True
+        ),OpenApiExample(
+            "Successful Response",
+            value={
+                "refresh":"eyJhbGc...",
+                "access":"eyJhbGc..."
+            },response_only=True
+        ),
+    ],
+)
+class LoginAPIView(TokenObtainPairView):
+    pass
+login_view=LoginAPIView.as_view()
