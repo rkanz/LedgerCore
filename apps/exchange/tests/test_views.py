@@ -6,11 +6,9 @@ from django.core.cache import cache
 from django.urls import reverse
 from rest_framework.test import APIClient
 
-from apps.accounts.services import register_user
 from apps.exchange.cache import invalidate_exchange_rate_cache
 from apps.exchange.models import ExchangeTransaction
 from apps.transactions.models import Transaction
-from apps.wallets.models import Wallet
 
 
 @pytest.mark.django_db

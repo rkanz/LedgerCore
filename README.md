@@ -2,7 +2,7 @@
 
 LedgerCore is a backend financial wallet and ledger system built with **Django REST Framework**.
 
-The project provides multi-currency wallets, financial transactions, cryptocurrency exchange, ledger tracking, caching, background tasks, and API documentation.
+The project provides multi-currency wallets, financial transactions, cryptocurrency exchange, ledger tracking, caching, background tasks, real-time features, and API documentation.
 
 ## Tech Stack
 
@@ -13,40 +13,51 @@ The project provides multi-currency wallets, financial transactions, cryptocurre
 * **Redis**
 * **Celery**
 * **Celery Beat**
+* **Django Channels**
+* **WebSocket**
 * **Docker / Docker Compose**
 * **JWT Authentication**
 * **DRF Spectacular**
 * **OpenAPI**
 * **Swagger UI**
 * **ReDoc**
-* **Pytest / pytest-django / pytest-cov**
+* **Pytest**
+* **pytest-django**
+* **pytest-asyncio**
+* **pytest-cov**
 
 ## Architecture
 
 The project follows a service-oriented approach inside Django.
 
 ```text
-Client
-  │
-  ▼
-DRF API
-  │
-  ├── Authentication
-  ├── Serializers / Validation
-  │
-  ▼
-Views
-  │
-  ▼
-Services
-  │
-  ├── Wallet Operations
-  ├── Transactions
-  ├── Exchange
-  └── Ledger
-  │
-  ▼
-PostgreSQL
+                         Client
+                        /      \
+                       /        \
+                    HTTP      WebSocket
+                     │             │
+                     ▼             ▼
+                  DRF API     Django Channels
+                     │             │
+             Authentication        │
+                     │             │
+             Serializers /         │
+               Validation          │
+                     │             │
+                     ▼             │
+                   Views           │
+                     │             │
+                     ▼             │
+                 Services          │
+                     │             │
+              ┌──────┴──────┐      │
+              │             │      │
+              ▼             ▼      │
+         PostgreSQL       Redis ◄──┘
+                            │
+                    ┌───────┴────────┐
+                    │                │
+                  Cache        Channel Layer
 ```
 
 Business-critical financial logic is kept inside **service functions** rather than views. Views are mainly responsible for authentication, validation, request handling, and returning API responses.
@@ -119,9 +130,74 @@ Exchange transactions record:
 * Transaction status
 * Creation / completion timestamps
 
+## Real-Time Features
+
+LedgerCore uses **Django Channels** and **WebSockets** to provide real-time updates without requiring clients to continuously poll the API.
+
+### Live Exchange Rates
+
+Exchange-rate updates are broadcast to connected clients through a shared WebSocket group.
+
+```text
+Celery Beat
+    │
+    ▼
+Exchange Rate Task
+    │
+    ▼
+Save ExchangeRate
+    │
+    ▼
+transaction.on_commit()
+    │
+    ▼
+Channel Layer (Redis)
+    │
+    ▼
+exchange_rates group
+    │
+    ▼
+Connected WebSocket Clients
+```
+
+WebSocket endpoint:
+
+```text
+/ws/exchange-rates/
+```
+
+### User Notifications
+
+Transaction-related notifications are delivered to authenticated users through private WebSocket groups.
+
+Each user has a dedicated group:
+
+```text
+notifications_user_<user_id>
+```
+
+This allows multiple connections for the same user while preventing notifications from being delivered to other users.
+
+Notifications are sent after a successful database transaction using `transaction.on_commit()`.
+
+Supported transaction notifications include:
+
+* Deposit
+* Withdraw
+* Transfer
+* Exchange
+
+WebSocket endpoint:
+
+```text
+/ws/notifications/
+```
+
+WebSocket connections use Django authentication through `AuthMiddlewareStack`.
+
 ## Redis & Caching
 
-**Redis** is used for application caching.
+**Redis** is used for application caching and as the Channels channel layer.
 
 Cached resources include:
 
@@ -167,9 +243,9 @@ API endpoints include authentication, wallets, transactions, exchange rates, and
 
 ## Testing
 
-The project uses **Pytest** with `pytest-django` and `pytest-cov`.
+The project uses **Pytest** with `pytest-django`, `pytest-asyncio`, and `pytest-cov`.
 
-Tests cover the main business and API flows, including:
+Tests cover the main business, API, background-task, and real-time flows, including:
 
 * Wallet operations
 * Deposits, withdrawals and transfers
@@ -183,9 +259,14 @@ Tests cover the main business and API flows, including:
 * Atomicity
 * Ledger entries
 * Background tasks
+* WebSocket connections
+* Real-time exchange-rate updates
+* User notifications
+* Notification user isolation
+* Anonymous WebSocket access rejection
 
 Current test suite:
 
-**78 tests — 97% overall coverage**
+**83 tests — 97% overall coverage**
 
 The goal is to test important business behavior and prevent financial logic bugs rather than artificially maximizing code coverage.

@@ -16,9 +16,10 @@ def update_exchange_rate(
         base_currency=base_currency,
         quote_currency=quote_currency
     )
+
     return {
         "id":exchange_rate.id, # pyright: ignore[reportAttributeAccessIssue]
         "base_currency":exchange_rate.base_currency,
-        "quote_currency":exchange_rate.base_currency,
+        "quote_currency":exchange_rate.quote_currency,
         "rate":str(exchange_rate.rate)
     }

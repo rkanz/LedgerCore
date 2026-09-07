@@ -3,6 +3,7 @@ from decimal import Decimal
 from django.db import transaction
 from django.utils import timezone
 
+from apps.realtime.realtime import send_notification
 from apps.wallets.cache import invalidate_user_wallet_cache
 from apps.wallets.models import Wallet
 
@@ -60,6 +61,16 @@ def deposit(
         transaction_id=new_transaction.id, # pyright: ignore[reportAttributeAccessIssue]
             )
         )
+        transaction.on_commit(
+        lambda: send_notification(
+        user_id=wallet.user_id, # type: ignore
+        data={
+            "type": "deposit",
+            "message": f"{amount} {wallet.currency} به کیف پول شما واریز شد.",
+            "transaction_id": new_transaction.id, # type: ignore
+                },
+            )
+        )
         return new_transaction
 
 
@@ -114,6 +125,16 @@ def withdraw(
         user_id=initiated_by.id,
         transaction_id=new_transaction.id, # pyright: ignore[reportAttributeAccessIssue]
             )
+        )
+        transaction.on_commit(
+        lambda: send_notification(
+        user_id=wallet.user_id, # type: ignore
+        data={
+            "type": "withdraw",
+            "message": f"{amount} {wallet.currency} از کیف پول شما برداشت شد.",
+            "transaction_id": new_transaction.id, # type: ignore
+            },
+        )
         )
         return new_transaction
 
@@ -209,4 +230,30 @@ def transfer(
                 transaction_id=new_transaction.id # pyright: ignore[reportAttributeAccessIssue]
             )
         )
+        transaction.on_commit(
+        lambda: send_notification(
+        user_id=source_wallet.user_id, # type: ignore
+        data={
+            "type": "transfer",
+            "message": (
+                f"{amount} {source_wallet.currency} "
+                f"به کیف پول مقصد منتقل شد."
+            ),
+            "transaction_id": new_transaction.id, # type: ignore
+                    },
+            )
+        )
+        transaction.on_commit(
+        lambda: send_notification(
+        user_id=destination_wallet.user_id, # type: ignore
+        data={
+            "type": "transfer",
+            "message": (
+                f"{amount} {destination_wallet.currency} "
+                f"به کیف پول شما واریز شد."
+            ),
+            "transaction_id": new_transaction.id, # type: ignore
+                    },
+                )
+        )       
         return new_transaction

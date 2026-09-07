@@ -2,7 +2,6 @@ services:
   web:
     build: .
     container_name: ledgercore-web
-    command: python manage.py runserver 0.0.0.0:8000
     volumes:
       - .:/app
     ports:

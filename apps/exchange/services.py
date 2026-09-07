@@ -5,6 +5,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.exchange.models import ExchangeRate, ExchangeTransaction
+from apps.realtime.realtime import broadcast_exchange_rate, send_notification
 from apps.transactions.cache import invalidate_user_transaction_cache
 from apps.transactions.models import LedgerEntry, Transaction
 from apps.wallets.cache import invalidate_user_wallet_cache
@@ -62,6 +63,9 @@ def save_exchange_rate(*,base_currency:str,quote_currency:str)->ExchangeRate:
     )
     transaction.on_commit(
         invalidate_exchange_rate_cache
+    )
+    transaction.on_commit(
+    lambda: broadcast_exchange_rate(exchange_rate)
     )
     return exchange_rate
 
@@ -185,6 +189,19 @@ def exchange(
             lambda:invalidate_user_transaction_cache(
                 user_id=initiated_by.id,
                 transaction_id=new_transaction.id # pyright: ignore[reportAttributeAccessIssue]
+            )
+        )
+        transaction.on_commit(
+            lambda:send_notification(
+                user_id=initiated_by.id,
+                data={
+                    "type":"exchange",
+                    "message": (
+                    f"{amount} {source_wallet.currency} "
+                    f"به {destination_amount} {destination_wallet.currency} تبدیل شد."
+                    ),
+                    "transaction_id":new_transaction.id, # type: ignore
+                },       
             )
         )
         return new_transaction
