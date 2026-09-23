@@ -38,6 +38,8 @@ INSTALLED_APPS = [
     'drf_spectacular',
     'apps.exchange',
     'channels',
+    'apps.realtime',
+    'apps.analytics',
 ]
 
 MIDDLEWARE = [

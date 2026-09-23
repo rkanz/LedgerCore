@@ -6,7 +6,7 @@ from django.urls import reverse
 from rest_framework.test import APIClient
 
 from apps.exchange.services import exchange
-from apps.transactions.models import Transaction
+from apps.transactions.models import Tag, Transaction
 from apps.transactions.services import deposit, withdraw
 from apps.wallets.models import Wallet
 
@@ -521,3 +521,197 @@ def test_transaction_history_detail_contains_exchange(api_client,wallet,exchange
     assert exchange_data["status"] == "COMPLETED"
     assert exchange_data["destination_amount"] == "116.70750000"
     assert exchange_data["fee_amount"] == "0.29250000"
+
+@pytest.mark.django_db 
+def test_transaction_history_detail_update_category_and_tags(user,wallets):
+    wallet=wallets[Wallet.Currency.USDT]
+    transaction=deposit(
+        wallet=wallet,
+        idempotency_key=uuid.uuid4(),
+        amount=Decimal("250"),
+        initiated_by=user,
+    
+    )
+    client=APIClient()
+    client.force_authenticate(user=user)
+    response = client.patch( reverse( "transactions:transaction-detail",
+                kwargs={"pk": transaction.id}, ),  # type: ignore
+                { "category": "FOOD", "tags": ["restaurant", "weekend"], }, )
+    assert response.status_code == 200 # type: ignore
+    assert response.data["category"] == "FOOD" # type: ignore
+    assert set(response.data["tags"]) == {"restaurant", "weekend"} # type: ignore
+    transaction.refresh_from_db()
+    assert transaction.category == "FOOD"
+    assert set(transaction.tags.values_list("name", flat=True)) == {"restaurant", "weekend",}
+
+@pytest.mark.django_db
+def test_transaction_history_detail_only_update_metadata(user,wallets):
+    wallet=wallets[Wallet.Currency.USDT]
+    transaction=deposit(
+        idempotency_key=uuid.uuid4(),
+        amount=Decimal("250"),
+        initiated_by=user,
+        wallet=wallet
+    )
+    client=APIClient()
+    client.force_authenticate(user=user)
+    response=client.patch(reverse("transactions:transaction-detail",
+        kwargs={"pk":transaction.id},),{ # type: ignore
+            "category":"SHOPPING",
+            "amount": "9999",
+            "status": "FAILED",
+            "currency": "BTC",
+        })
+    assert response.status_code == 200 # type: ignore
+    transaction.refresh_from_db()
+    assert transaction.category == "SHOPPING"
+    assert transaction.amount == Decimal("250")
+    assert transaction.currency == "USDT"
+    assert transaction.status == Transaction.TransactionStatus.COMPLETED
+    
+@pytest.mark.django_db
+def test_transaction_history_tag_filter(user,wallets):
+    wallet=wallets[Wallet.Currency.USDT]
+    client=APIClient()
+    client.force_authenticate(user=user)
+    food_transaction=deposit(
+        idempotency_key=uuid.uuid4(),
+        amount=Decimal("250"),
+        initiated_by=user,
+        wallet=wallet
+    )
+    food_transaction.category = "FOOD"
+    food_transaction.save(update_fields=["category"])
+    food_tag = Tag.objects.create(name="restaurant")
+    food_transaction.tags.add(food_tag)
+    shopping_transaction=deposit(
+            idempotency_key=uuid.uuid4(),
+            amount=Decimal("100"),
+            initiated_by=user,
+            wallet=wallet
+        )
+    shopping_transaction.category = "SHOPPING"
+    shopping_transaction.save(update_fields=["category"])
+    response=client.get(reverse("transactions:transaction-history")+ "?category=FOOD")
+    assert response.data["count"] == 1 # type: ignore
+    assert response.status_code == 200 # type: ignore
+    assert response.data["results"][0]["id"] == food_transaction.id # type: ignore
+    response1 = client.get( reverse("transactions:transaction-history") + "?tag=restaurant" )
+    assert response1.status_code == 200 # type: ignore
+    assert response1.data["count"] == 1 # type: ignore
+    assert response1.data["results"][0]["id"] == food_transaction.id # type: ignore
+
+
+@pytest.mark.django_db(transaction=True)
+def test_transaction_history_cache_invalidated_after_metadata_update(api_client,user,wallets):
+    wallet=wallets[Wallet.Currency.USDT]
+    transaction=deposit(
+            idempotency_key=uuid.uuid4(),
+            amount=Decimal("250"),
+            initiated_by=user,
+            wallet=wallet
+        )
+    url=reverse(
+        "transactions:transaction-detail",
+        kwargs={"pk":transaction.pk}
+    )
+    response=api_client.get(url)
+    assert response.status_code == 200
+    assert response.data["category"] == "OTHER"
+    response=api_client.patch(url,{
+        "category":"FOOD",
+        "tags":["restaurant"]
+    },format="json")
+    assert response.status_code == 200
+    response = api_client.get(url)
+    assert response.status_code == 200
+    assert response.data["category"] == "FOOD"
+    assert response.data["tags"] == ["restaurant"]
+
+
+@pytest.mark.django_db
+def test_frequent_recipients_view(
+    api_client,
+    user,
+    wallets,
+    ali_wallets,
+    mina_wallets,
+    create_transfer,
+):
+    user_usdt_wallet=wallets[Wallet.Currency.USDT]
+    ali_usdt_wallet=ali_wallets[Wallet.Currency.USDT]
+    mina_usdt_wallet = mina_wallets[Wallet.Currency.USDT]
+    create_transfer(
+        initiated_by=user,
+        source_wallet=user_usdt_wallet,
+        destination_wallet=mina_usdt_wallet,
+    )
+    create_transfer(
+        initiated_by=user,
+        source_wallet=user_usdt_wallet,
+        destination_wallet=mina_usdt_wallet,
+    )
+    create_transfer(
+        initiated_by=user,
+        source_wallet=user_usdt_wallet,
+        destination_wallet=ali_usdt_wallet,
+    )
+    response=api_client.get(reverse("transactions:frequent-recipients"),{
+        "currency":Wallet.Currency.USDT
+    })
+    assert response.status_code == 200
+    assert len(response.data) == 2
+    assert response.data[0]["id"] == mina_usdt_wallet.id
+    assert response.data[0]["user"]["id"] == mina_usdt_wallet.user.id
+    assert response.data[0]["currency"] == Wallet.Currency.USDT
+    assert response.data[0]["user"]["name"] == mina_usdt_wallet.user.get_full_name()
+    assert response.data[1]["id"] == ali_usdt_wallet.id
+
+
+@pytest.mark.django_db
+def test_frequent_recipients_view_requires_currency(api_client):
+    response=api_client.get(reverse("transactions:frequent-recipients"))
+    assert response.status_code == 400
+    assert response.data["detail"] == "currency is required."
+
+@pytest.mark.django_db
+def test_recent_recipients_view(
+    api_client,
+    user,
+    wallets,
+    ali_wallets,
+    mina_wallets,
+    create_transfer,
+):
+    user_usdt_wallet=wallets[Wallet.Currency.USDT]
+    ali_usdt_wallet=ali_wallets[Wallet.Currency.USDT]
+    mina_usdt_wallet = mina_wallets[Wallet.Currency.USDT]
+    create_transfer(
+        initiated_by=user,
+        source_wallet=user_usdt_wallet,
+        destination_wallet=mina_usdt_wallet,
+    )
+    create_transfer(
+        initiated_by=user,
+        source_wallet=user_usdt_wallet,
+        destination_wallet=ali_usdt_wallet,
+    )
+    response=api_client.get(reverse("transactions:recent-recipients"),{
+        "currency":Wallet.Currency.USDT
+    })
+    assert response.status_code == 200
+    assert len(response.data) == 2
+    assert response.data[0]["id"] == ali_usdt_wallet.id
+    assert response.data[0]["currency"] == Wallet.Currency.USDT
+    assert response.data[0]["user"]["id"] == ali_usdt_wallet.user.id
+    assert response.data[0]["user"]["name"] == ali_usdt_wallet.user.get_full_name()
+    assert response.data[1]["id"] == mina_usdt_wallet.id
+
+@pytest.mark.django_db
+def test_recent_recipients_view_requires_currency(api_client):
+    response = api_client.get(
+        reverse("transactions:recent-recipients")
+    )
+
+    assert response.status_code == 400
+    assert response.data["detail"] == "currency is required."

@@ -1,10 +1,18 @@
+from datetime import timedelta
 import uuid
 from decimal import Decimal
 
+from django.utils import timezone
 import pytest
 
 from apps.transactions.models import LedgerEntry, Transaction
-from apps.transactions.services import deposit, transfer, withdraw
+from apps.transactions.services import (
+    deposit,
+    get_frequent_recipients,
+    get_recent_recipients,
+    transfer,
+    withdraw,
+)
 from apps.wallets.models import Wallet
 
 
@@ -310,3 +318,168 @@ def test_withdraw_invalid_amount(user,wallets,amount):
     wallet.refresh_from_db()
     assert Transaction.objects.count() == 0
     assert LedgerEntry.objects.count() == 0
+
+@pytest.mark.django_db
+def test_get_frequent_recipients(create_transfer,user,ali_wallets,mina_wallets,wallets):
+    user_wallet=wallets[Wallet.Currency.USDT]
+    ali_wallet=ali_wallets[Wallet.Currency.USDT]
+    mina_wallet=mina_wallets[Wallet.Currency.USDT]
+    create_transfer(
+        initiated_by=user,
+        source_wallet=user_wallet,
+        destination_wallet=mina_wallet,
+    )
+    create_transfer(
+        initiated_by=user,
+        source_wallet=user_wallet,
+        destination_wallet=ali_wallet,
+    )
+    create_transfer(
+        initiated_by=user,
+        source_wallet=user_wallet,
+        destination_wallet=mina_wallet,
+    )
+    recipients=get_frequent_recipients(
+        currency=Wallet.Currency.USDT,
+        user=user,
+    )
+    assert list(recipients) == [mina_wallet, ali_wallet]
+
+@pytest.mark.django_db
+def test_frequent_recipients_excludes_failed_transfers(create_transfer,user,ali_wallets,mina_wallets,wallets):
+    user_wallet=wallets[Wallet.Currency.USDT]
+    ali_wallet=ali_wallets[Wallet.Currency.USDT]
+    mina_wallet=mina_wallets[Wallet.Currency.USDT]
+    create_transfer(
+        initiated_by=user,
+        source_wallet=user_wallet,
+        destination_wallet=mina_wallet,
+    )
+    create_transfer(
+        initiated_by=user,
+        source_wallet=user_wallet,
+        destination_wallet=ali_wallet,
+        status=Transaction.TransactionStatus.FAILED
+    )   
+    create_transfer(
+        initiated_by=user,
+        source_wallet=user_wallet,
+        destination_wallet=ali_wallet,
+        status=Transaction.TransactionStatus.FAILED
+    )
+    recipients=get_frequent_recipients(
+        user=user,
+        currency=Wallet.Currency.USDT
+    ) 
+    assert list(recipients) == [mina_wallet]
+    assert recipients[0].transfer_count == 1       # type: ignore
+
+
+@pytest.mark.django_db
+def test_get_frequent_recipients_different_currencies(wallets,mina_wallets,create_transfer,user):
+    user_usdt_wallet=wallets[Wallet.Currency.USDT]
+    user_btc_wallet=wallets[Wallet.Currency.BTC]
+
+    mina_usdt_wallet=mina_wallets[Wallet.Currency.USDT]
+    mina_btc_wallet=mina_wallets[Wallet.Currency.BTC]
+    create_transfer(
+        initiated_by=user,
+        source_wallet=user_usdt_wallet,
+        destination_wallet=mina_usdt_wallet,
+    )
+    create_transfer(
+        initiated_by=user,
+        source_wallet=user_usdt_wallet,
+        destination_wallet=mina_usdt_wallet,
+    )
+    create_transfer(
+        initiated_by=user,
+        source_wallet=user_btc_wallet,
+        destination_wallet=mina_btc_wallet,
+    )
+    recipients=get_frequent_recipients(
+        user=user,
+        currency=Wallet.Currency.USDT
+    )
+    assert recipients[0].transfer_count == 2 # type: ignore
+
+@pytest.mark.django_db
+def test_get_frequent_recipients_only_counts_current_user_transfers(
+    user,
+    ali,
+    wallets,
+    ali_wallets,
+    mina_wallets,
+    create_transfer,
+):
+    user_usdt_wallet = wallets[Wallet.Currency.USDT]
+    ali_usdt_wallet = ali_wallets[Wallet.Currency.USDT]
+    mina_usdt_wallet = mina_wallets[Wallet.Currency.USDT]
+    create_transfer(
+        initiated_by=user,
+        source_wallet=user_usdt_wallet,
+        destination_wallet=ali_usdt_wallet
+    )
+    create_transfer(
+        initiated_by=ali,
+        source_wallet=ali_usdt_wallet,
+        destination_wallet=mina_usdt_wallet
+    )
+    recipients=get_frequent_recipients(
+        user=ali,
+        currency=Wallet.Currency.USDT
+    )
+    assert list(recipients) == [mina_usdt_wallet]
+    assert len(recipients) == 1
+    assert recipients[0].transfer_count == 1 # type: ignore
+
+@pytest.mark.django_db
+def test_get_recent_recipients(create_transfer,wallets,user,ali_wallets,mina_wallets):
+    user_usdt_wallet = wallets[Wallet.Currency.USDT]
+    ali_usdt_wallet = ali_wallets[Wallet.Currency.USDT]
+    mina_usdt_wallet = mina_wallets[Wallet.Currency.USDT]
+    old_mina=create_transfer(
+        initiated_by=user,
+        source_wallet=user_usdt_wallet,
+        destination_wallet=mina_usdt_wallet,
+    )
+    old_ali = create_transfer(
+        initiated_by=user,
+        source_wallet=user_usdt_wallet,
+        destination_wallet=ali_usdt_wallet,
+    )
+
+    recent_mina = create_transfer(
+        initiated_by=user,
+        source_wallet=user_usdt_wallet,
+        destination_wallet=mina_usdt_wallet,
+    )
+    old_mina.created_at =timezone.now() - timedelta(days=3)
+    old_mina.save(update_fields=["created_at"])
+
+    old_ali.created_at =timezone.now() - timedelta(days=2)
+    old_ali.save(update_fields=["created_at"])
+
+    recent_mina.created_at = timezone.now() - timedelta(days=1)
+    recent_mina.save(update_fields=["created_at"])
+    recent_recipients=get_recent_recipients(
+        user=user,
+        currency=Wallet.Currency.USDT
+    )
+    assert list(recent_recipients) == [mina_usdt_wallet,ali_usdt_wallet]
+
+@pytest.mark.django_db
+def test_get_recent_recipients_excludes_failed_transfers(create_transfer,wallets,user,ali_wallets):
+    user_usdt_wallet = wallets[Wallet.Currency.USDT]
+    ali_usdt_wallet = ali_wallets[Wallet.Currency.USDT]
+    create_transfer(
+        initiated_by=user,
+        source_wallet=user_usdt_wallet,
+        destination_wallet=ali_usdt_wallet,
+        status=Transaction.TransactionStatus.FAILED
+    )
+    recent_recipients=get_recent_recipients(
+        user=user,
+        currency=Wallet.Currency.USDT
+    )
+    assert list(recent_recipients) == []

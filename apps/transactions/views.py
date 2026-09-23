@@ -1,6 +1,8 @@
 import uuid
 
+import django_filters
 from django.core.cache import cache
+from django.db import transaction
 from django.db.models import Q
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import (
@@ -11,7 +13,7 @@ from drf_spectacular.utils import (
     extend_schema,
 )
 from rest_framework import generics, status
-from rest_framework.filters import OrderingFilter
+from rest_framework.filters import OrderingFilter, SearchFilter
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -21,16 +23,24 @@ from apps.wallets.models import Wallet
 
 from .cache import (
     TRANSACTION_CACHE_TTL,
+    invalidate_user_transaction_cache,
     transaction_history_cache_key,
     transaction_history_detail_cache_key,
 )
 from .serializers import (
     DepositSerializer,
+    RecipientSerializer,
     TransactionHistorySerializer,
     TransferSerializer,
     WithdrawSerializer,
 )
-from .services import deposit, transfer, withdraw
+from .services import (
+    deposit,
+    get_frequent_recipients,
+    get_recent_recipients,
+    transfer,
+    withdraw,
+)
 
 
 @extend_schema(
@@ -287,13 +297,25 @@ transfer_view=TransferAPIView.as_view()
 class TransactionPagination(PageNumberPagination):
      page_size=10
 
+class TransactionFilter(django_filters.FilterSet):
+
+    tag = django_filters.CharFilter(field_name="tags__name",lookup_expr="iexact",)
+    class Meta:
+        model = Transaction
+        fields = ["transaction_type","status","currency","category",]
+
 @extend_schema(
     summary="List transaction history",
     description="""
     Return a paginated list of the authenticated user's transactions.
-    Supports filtering, ordering and pagination.
+
+    Supports filtering by transaction type, status, currency,
+    category and tag. Supports searching by tag name,
+    ordering and pagination.
+
     Responses are cached with Redis for a short period.
-    Cache is invalidated when transaction-related wallet data changes.
+    Transaction history cache is invalidated when transaction
+    data or transaction metadata changes.
     """,
     tags=["Transactions"],
     responses={
@@ -328,13 +350,34 @@ class TransactionPagination(PageNumberPagination):
 
             ),
         ),
+        OpenApiParameter(
+            name="category",
+            type=OpenApiTypes.STR,
+            location=OpenApiParameter.QUERY,
+            description="Filter transactions by category.",
+        ),
+
+        OpenApiParameter(
+            name="tag",
+            type=OpenApiTypes.STR,
+            location=OpenApiParameter.QUERY,
+            description="Filter transactions by tag name.",
+        ),
+
+        OpenApiParameter(
+            name="search",
+            type=OpenApiTypes.STR,
+            location=OpenApiParameter.QUERY,
+            description="Search transactions by tag name.",
+        )
     ],
 )
 class TransactionHistoryAPIView(generics.ListAPIView):
     serializer_class=TransactionHistorySerializer
     pagination_class=TransactionPagination
-    filter_backends = [DjangoFilterBackend,OrderingFilter]
-    filterset_fields = ['transaction_type', "status","currency",]
+    filter_backends = [DjangoFilterBackend,OrderingFilter,SearchFilter]
+    search_fields = ["tags__name",]
+    filterset_class=TransactionFilter
     ordering_fields=['amount','completed_at',"created_at"]
     def get_queryset(self):
         return Transaction.objects.filter(
@@ -347,7 +390,7 @@ class TransactionHistoryAPIView(generics.ListAPIView):
             "initiated_by",
             "exchange_details",
             "exchange_details__exchange_rate",
-        ).distinct().order_by("-created_at")
+        ).prefetch_related("tags",).distinct().order_by("-created_at")
     def list(self,request,*args,**kwargs):
         cache_key=transaction_history_cache_key(request.user.id,request.get_full_path())
         cached_data=cache.get(cache_key)
@@ -368,7 +411,7 @@ transaction_history_view=TransactionHistoryAPIView.as_view()
 @extend_schema(
     summary="Retrieve transaction details",
     description="""
-    Return detailed information about a transaction that belongs
+    Returns detailed information about a transaction that belongs
     to or involves the authenticated user.
     """,
     tags=["Transactions"],
@@ -379,7 +422,7 @@ transaction_history_view=TransactionHistoryAPIView.as_view()
         ),
     },
 )
-class TransactionHistoryDetailAPIView(generics.RetrieveAPIView):
+class TransactionHistoryDetailAPIView(generics.RetrieveUpdateAPIView):
     serializer_class=TransactionHistorySerializer
     def get_queryset(self):
         return Transaction.objects.filter(
@@ -392,7 +435,7 @@ class TransactionHistoryDetailAPIView(generics.RetrieveAPIView):
             "initiated_by",
             "exchange_details",
             "exchange_details__exchange_rate",
-        ).distinct()
+        ).prefetch_related("tags",).distinct()
     def retrieve(self,request,*args,**kwargs):
         cache_key=transaction_history_detail_cache_key(request.user.id,kwargs["pk"])
         cached_data=cache.get(cache_key)
@@ -402,6 +445,127 @@ class TransactionHistoryDetailAPIView(generics.RetrieveAPIView):
         serializer=self.get_serializer(instance)
         cache.set(cache_key,serializer.data,timeout=TRANSACTION_CACHE_TTL)
         return Response(serializer.data)
+    
+    def perform_update(self, serializer):
+        instance = serializer.save()
+
+        transaction.on_commit(
+        lambda: invalidate_user_transaction_cache(
+            self.request.user.id,  # type: ignore
+            instance.pk,
+        )
+    )
 
 transaction_detail_view=TransactionHistoryDetailAPIView.as_view()
 
+@extend_schema(
+    summary="Get frequent recipients",
+    description="""
+    Returns the user's most frequent transfer recipients.
+    Only completed transfers are considered, and up to 10 recipients are returned.
+    """,
+    tags=["Transactions"],
+    responses={
+        400:OpenApiResponse(
+           description="currency is required.",
+           response=OpenApiTypes.OBJECT
+        ),200:RecipientSerializer(many=True)
+    },
+    parameters=[
+         OpenApiParameter(
+            name="currency",
+            type=OpenApiTypes.STR,
+            location=OpenApiParameter.QUERY,
+            required=True,
+            description="Wallet currency e.g. USDT."
+         )
+    ],examples=[
+         OpenApiExample(
+         "Frequent recipients response",
+         summary="Frequent recipients",
+         
+         value=[
+            {
+            "id": 42,
+            "user": {
+                "id": 7,
+                "name": "Ali Test",
+            },
+            "currency": "USDT",
+            }
+         ],response_only=True
+         )
+    ]
+)
+class FrequentRecipientAPIView(APIView):
+    def get(self,request):
+        currency=request.query_params.get("currency")
+
+        if not currency:
+            return Response({
+                "detail":"currency is required."
+            },status=status.HTTP_400_BAD_REQUEST)
+        recipients=get_frequent_recipients(
+            user=request.user,
+            currency=currency
+        )
+        serializer=RecipientSerializer(
+            recipients,many=True
+        )
+        return Response(serializer.data)
+frequent_recipients_view=FrequentRecipientAPIView.as_view()
+
+@extend_schema(
+    summary="Get recent recipients",
+    description="""
+    Returns the user's most recent transfer recipients.
+    Only completed transfers are considered, and up to 10 recipients are returned.
+    """,
+    tags=["Transactions"],
+    responses={
+        400:OpenApiResponse(
+           description="currency is required.",
+           response=OpenApiTypes.OBJECT
+        ),200:RecipientSerializer(many=True)
+    },
+    parameters=[
+         OpenApiParameter(
+            name="currency",
+            type=OpenApiTypes.STR,
+            location=OpenApiParameter.QUERY,
+            required=True,
+            description="Wallet currency e.g. BTC."
+         )
+    ],examples=[
+         OpenApiExample(
+         "Recent recipients response",
+         summary="Recent recipients",
+         
+         value=[
+            {
+            "id": 14,
+            "user": {
+                "id": 3,
+                "name": "Alice Test",
+            },
+            "currency": "BTC",
+            }
+         ],response_only=True
+         )
+    ]
+)
+class RecentRecipientAPIView(APIView):
+    def get(self,request):
+        currency=request.query_params.get("currency")
+        if not currency :
+                    return Response({
+                        "detail":"currency is required."
+                    },status=status.HTTP_400_BAD_REQUEST)
+        recipients=get_recent_recipients(
+             user=request.user,
+             currency=currency
+        )
+        serializer=RecipientSerializer(recipients,many=True)
+        return Response(serializer.data)
+
+recent_recipients_view=RecentRecipientAPIView.as_view()

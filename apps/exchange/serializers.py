@@ -48,9 +48,9 @@ class ExchangeTransactionSerializer(serializers.ModelSerializer):
             "created_at",
         ]
         read_only_fields=fields
-    def get_source_currency(self, obj):
+    def get_source_currency(self, obj)-> str:
         return obj.transaction.source_wallet.currency
 
-    def get_destination_currency(self, obj):
+    def get_destination_currency(self, obj)-> str:
         return obj.transaction.destination_wallet.currency
 

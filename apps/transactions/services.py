@@ -1,6 +1,8 @@
+
 from decimal import Decimal
 
 from django.db import transaction
+from django.db.models import Count, OuterRef, Q, Subquery
 from django.utils import timezone
 
 from apps.realtime.realtime import send_notification
@@ -257,3 +259,38 @@ def transfer(
                 )
         )       
         return new_transaction
+
+def get_frequent_recipients(user,currency,limit=10):
+    return(
+        Wallet.objects.filter(currency=currency).annotate(
+            transfer_count=Count(
+                "incoming_transactions",
+                filter=Q(
+                    incoming_transactions__initiated_by=user,
+                    incoming_transactions__transaction_type=(
+                        Transaction.TransactionType.TRANSFER
+                        ),incoming_transactions__status=(
+                            Transaction.TransactionStatus.COMPLETED
+                    ),
+                ),    
+            )
+        ).filter(transfer_count__gt=0).select_related("user").order_by("-transfer_count","id")[:limit]
+    )
+
+def get_recent_recipients(user,currency,limit=10):
+    latest_transaction=(
+        Transaction.objects.filter(
+            initiated_by=user,
+            currency=currency,
+            status=Transaction.TransactionStatus.COMPLETED,
+            transaction_type=Transaction.TransactionType.TRANSFER,
+            destination_wallet=OuterRef("pk")
+        ).order_by("-created_at")
+
+    )
+    return Wallet.objects.filter(currency=currency).annotate(
+        latest_transfer_at=Subquery(
+            latest_transaction.values("created_at")[:1]
+        )
+    ).filter(latest_transfer_at__isnull=False).select_related("user").order_by(
+        "-latest_transfer_at","id")[:limit]

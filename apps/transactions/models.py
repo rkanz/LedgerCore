@@ -4,12 +4,26 @@ from django.db import models
 from apps.wallets.models import Wallet
 
 
+class Category(models.TextChoices):
+    FOOD = "FOOD", "Food"
+    SHOPPING = "SHOPPING", "Shopping"
+    TRANSPORT = "TRANSPORT", "Transport"
+    BILLS = "BILLS", "Bills"
+    HEALTH = "HEALTH", "Health"
+    HOME = "HOME", "Home"
+    ENTERTAINMENT = "ENTERTAINMENT", "Entertainment"
+    OTHER = "OTHER", "Other"
+
+class Tag(models.Model):
+    name = models.CharField(max_length=20, unique=True)
+
 class Transaction(models.Model):
     class TransactionType(models.TextChoices):
         DEPOSIT="DEPOSIT","Deposit"
         WITHDRAW="WITHDRAW","Withdraw"
         TRANSFER="TRANSFER","Transfer"
         EXCHANGE="EXCHANGE","Exchange"
+
     class TransactionStatus(models.TextChoices):
         PENDING="PENDING","Pending"
         COMPLETED="COMPLETED","Completed"
@@ -28,7 +42,9 @@ class Transaction(models.Model):
     created_at=models.DateTimeField(auto_now_add=True)
     completed_at=models.DateTimeField(null=True,blank=True)
     initiated_by=models.ForeignKey(settings.AUTH_USER_MODEL,on_delete=models.PROTECT,related_name="initiated_transactions")
-
+    category=models.CharField(choices=Category.choices,default=Category.OTHER,max_length=20)
+    tags = models.ManyToManyField(Tag,blank=True,related_name="transactions",)
+    
 class LedgerEntry(models.Model):
     class EntryType(models.TextChoices):
         DEBIT="DEBIT","Debit"
@@ -38,3 +54,4 @@ class LedgerEntry(models.Model):
     amount=models.DecimalField(max_digits=20,decimal_places=8)
     entry_type=models.CharField(max_length=6,choices=EntryType.choices)
     wallet=models.ForeignKey(Wallet,on_delete=models.PROTECT,related_name="ledger_entries")
+
