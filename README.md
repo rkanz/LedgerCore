@@ -2,7 +2,7 @@
 
 LedgerCore is a backend financial wallet and ledger system built with **Django REST Framework**.
 
-The project provides multi-currency wallets, financial transactions, cryptocurrency exchange, ledger tracking, caching, background tasks, real-time features, and API documentation.
+The project provides multi-currency wallets, financial transactions, cryptocurrency exchange, ledger tracking, financial analytics, caching, background tasks, real-time features, and API documentation.
 
 ## Tech Stack
 
@@ -37,30 +37,32 @@ The project follows a service-oriented approach inside Django.
                     HTTP      WebSocket
                      │             │
                      ▼             ▼
-                  DRF API     Django Channels
+                 DRF API      Django Channels
                      │             │
              Authentication        │
                      │             │
-             Serializers /         │
-               Validation          │
+             Serializers /        │
+               Validation         │
                      │             │
                      ▼             │
                    Views           │
                      │             │
                      ▼             │
-                 Services          │
+                  Services         │
                      │             │
               ┌──────┴──────┐      │
               │             │      │
               ▼             ▼      │
-         PostgreSQL       Redis ◄──┘
+         PostgreSQL       Redis ◄───┘
                             │
-                    ┌───────┴────────┐
-                    │                │
-                  Cache        Channel Layer
+                   ┌────────┴────────┐
+                   │                 │
+                 Cache        Channel Layer
 ```
 
 Business-critical financial logic is kept inside **service functions** rather than views. Views are mainly responsible for authentication, validation, request handling, and returning API responses.
+
+Financial and analytics operations are designed to perform calculations at the database level using Django ORM aggregation and filtering where appropriate.
 
 ## Core Wallet
 
@@ -74,6 +76,8 @@ Implemented operations include:
 * Transaction history
 * Ledger entries
 * Multi-currency wallets
+* Transaction categories
+* Transaction tags
 
 Financial operations use:
 
@@ -81,6 +85,8 @@ Financial operations use:
 * `select_for_update()` for wallet locking
 * `Decimal` for monetary calculations
 * Idempotency keys to prevent duplicate operations
+
+Transactions maintain their associated ledger entries and support status tracking for financial operations.
 
 ## Exchange
 
@@ -129,6 +135,51 @@ Exchange transactions record:
 * Fee currency
 * Transaction status
 * Creation / completion timestamps
+
+## Analytics
+
+LedgerCore provides wallet-specific financial analytics based on ledger entries and completed transaction history.
+
+Analytics calculations are performed at the database level using Django ORM aggregations rather than loading the complete transaction history into application memory.
+
+### Income & Expenses
+
+Income and expense reports support predefined periods:
+
+* Week
+* Month
+* Year
+
+Custom date ranges can also be provided using `start_date` and `end_date`.
+
+Income is calculated from **credit ledger entries**, while expenses are calculated from **debit ledger entries**.
+
+### Summary
+
+The summary endpoint provides the total income and expenses for the selected wallet, currency, and date range.
+
+### Monthly Report
+
+Monthly reports provide:
+
+* Total income
+* Total expenses
+* Expense breakdown by category
+
+### Balance History
+
+Balance history is calculated from ledger entries rather than stored balance snapshots.
+
+The endpoint returns daily ending balances for days where the wallet balance changes, including the opening balance for the requested range.
+
+### Recipients
+
+LedgerCore provides recipient insights based on completed transfer history:
+
+* **Frequent Recipients** — recipients ranked by the number of completed transfers.
+* **Recent Recipients** — recipients ordered by the latest completed transfer.
+
+Recipient results are wallet-specific and filtered by currency.
 
 ## Real-Time Features
 
@@ -203,6 +254,7 @@ Cached resources include:
 
 * Wallet lists and wallet details
 * Transaction history
+* Transaction details
 * Exchange rates
 
 Cache invalidation is performed when relevant financial data changes to prevent stale wallet or transaction information.
@@ -239,17 +291,52 @@ Available documentation interfaces:
 * ReDoc
 * OpenAPI schema
 
-API endpoints include authentication, wallets, transactions, exchange rates, and currency exchange operations.
+API endpoints include:
+
+* Authentication
+* Wallets
+* Transactions
+* Exchange rates
+* Currency exchange operations
+* Financial analytics
+* Recipient insights
+* Balance history
+
+### Analytics Endpoints
+
+```text
+GET /api/analytics/income/
+GET /api/analytics/expense/
+GET /api/analytics/summary/
+GET /api/analytics/monthly-report/
+GET /api/analytics/balance-history/
+```
+
+### Recipient Endpoints
+
+```text
+GET /api/transactions/frequent-recipients/
+GET /api/transactions/recent-recipients/
+```
+
+### Transaction Detail
+
+```text
+GET   /api/transactions/{id}/
+PUT   /api/transactions/{id}/
+PATCH /api/transactions/{id}/
+```
 
 ## Testing
 
 The project uses **Pytest** with `pytest-django`, `pytest-asyncio`, and `pytest-cov`.
 
-Tests cover the main business, API, background-task, and real-time flows, including:
+Tests cover the main business, API, background-task, analytics, and real-time flows, including:
 
 * Wallet operations
 * Deposits, withdrawals and transfers
 * Transaction history
+* Transaction categories and tags
 * Exchange service
 * Exchange API
 * Exchange rates
@@ -258,6 +345,12 @@ Tests cover the main business, API, background-task, and real-time flows, includ
 * Authentication and authorization
 * Atomicity
 * Ledger entries
+* Income and expense analytics
+* Financial summary
+* Monthly reports
+* Balance history
+* Frequent recipients
+* Recent recipients
 * Background tasks
 * WebSocket connections
 * Real-time exchange-rate updates
@@ -267,6 +360,6 @@ Tests cover the main business, API, background-task, and real-time flows, includ
 
 Current test suite:
 
-**83 tests — 97% overall coverage**
+**156 tests — 98% overall coverage**
 
 The goal is to test important business behavior and prevent financial logic bugs rather than artificially maximizing code coverage.
