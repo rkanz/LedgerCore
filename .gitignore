@@ -20,7 +20,7 @@ __pycache__/
 *.pyc
 # Django
 db.sqlite3
-*.log
+
 
 # Celery
 celerybeat-schedule*
@@ -46,3 +46,15 @@ Thumbs.db
 
 # Redis
 dump.rdb
+
+# SSL / TLS local certificates and private keys
+ssl/
+
+# Logs
+logs/
+*.log
+
+# Database backups
+backups/
+backups
+ledgercore_backup*.dump

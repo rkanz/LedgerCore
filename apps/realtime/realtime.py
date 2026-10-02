@@ -1,5 +1,9 @@
+import logging
+
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
+
+logger = logging.getLogger(__name__)
 
 
 def broadcast_exchange_rate(exchange_rate):
@@ -16,12 +20,29 @@ def broadcast_exchange_rate(exchange_rate):
         },
     )
 def send_notification(*,user_id:int,data:dict):
+    
     channel_layer=get_channel_layer()
     group_name = f"notifications_user_{user_id}"
-    async_to_sync(channel_layer.group_send)( # type: ignore
-        group_name,
-        {
-            "type":"notification",
-            "data":data
-        }
-    )
+    try:
+        async_to_sync(channel_layer.group_send)( # type: ignore
+            group_name,
+            {
+                "type":"notification",
+                "data":data
+            }
+        )
+        logger.info(
+            "Notification sent: user_id=%s type=%s transaction_id=%s",
+            user_id,
+            data.get("type"),
+            data.get("transaction_id"),
+        )        
+    except Exception:
+        logger.exception(
+            "Failed to send notification:"
+            "user_id=%s type=%s transaction_id=%s",
+            user_id,
+            data.get("type"),
+            data.get("transaction_id")
+        )
+        raise

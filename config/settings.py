@@ -1,24 +1,21 @@
-import os
 from pathlib import Path
 
 import environ
-from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
-# Quick-start development settings - unsuitable for production
+env = environ.Env()
+environ.Env.read_env(BASE_DIR / ".env")
 
 
-# SECURITY WARNING: keep the secret key used in production secret!
-load_dotenv()
-SECRET_KEY = os.getenv("SECRET_KEY")
-DEBUG = os.getenv("DEBUG") == "True"
+SECRET_KEY = env("SECRET_KEY")
+DEBUG = env.bool("DEBUG", default=False)
 # SECURITY WARNING: don't run with debug turned on in production!
 
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=[]) # type: ignore
 
 
 # Application definition
@@ -40,6 +37,7 @@ INSTALLED_APPS = [
     'channels',
     'apps.realtime',
     'apps.analytics',
+    'apps.health'
 ]
 
 MIDDLEWARE = [
@@ -74,8 +72,7 @@ ASGI_APPLICATION = "config.asgi.application"
 
 # Database
 
-env = environ.Env()
-environ.Env.read_env(BASE_DIR / ".env")
+
 
 DATABASES = {
     "default": {
@@ -165,6 +162,38 @@ CHANNEL_LAYERS = {
                     "socket_timeout": None,
                 }
             ],
+        },
+    },
+}
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+
+    "formatters": {
+        "standard": {
+            "format": "{asctime} {levelname} {name} {message}",
+            "style": "{",
+        },
+    },
+
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "standard",
+        },
+        "file": {
+            "class": "logging.FileHandler",
+            "filename": BASE_DIR / "logs" / "ledgercore.log",
+            "formatter": "standard",
+        },
+    },
+
+    "loggers": {
+        "apps": {
+            "handlers": ["console", "file"],
+            "level": "INFO",
+            "propagate": False,
         },
     },
 }

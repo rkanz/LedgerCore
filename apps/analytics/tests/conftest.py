@@ -1,3 +1,4 @@
+import calendar
 import uuid
 from decimal import Decimal
 
@@ -134,3 +135,17 @@ def create_ledger_entry():
         LedgerEntry.objects.filter(pk=entry.pk).update(created_at=created_at)
         return entry
     return _create_ledger_entry
+
+@pytest.fixture
+def current_month():
+    today = timezone.localdate()
+
+    start_date = today.replace(day=1)
+    last_day = calendar.monthrange(today.year, today.month)[1]
+    end_date = today.replace(day=last_day)
+
+    return {
+        "month": today.strftime("%Y-%m"),
+        "start_date": start_date,
+        "end_date": end_date,
+    }

@@ -1,4 +1,4 @@
-
+import logging
 from decimal import Decimal
 
 from django.db import transaction
@@ -12,6 +12,7 @@ from apps.wallets.models import Wallet
 from .cache import invalidate_user_transaction_cache
 from .models import LedgerEntry, Transaction
 
+logger = logging.getLogger(__name__)
 
 def deposit(
     *,
@@ -22,58 +23,77 @@ def deposit(
 ):
     if amount <= 0:
         raise ValueError("Deposit amount must be greater than zero.")
-    with transaction.atomic():
-        wallet = Wallet.objects.select_for_update().get(pk=wallet.pk)
-        existing_transaction = Transaction.objects.filter(
-            idempotency_key=idempotency_key
-        ).first()
-        if existing_transaction:
-            return existing_transaction
-        new_transaction = Transaction.objects.create(
-            source_wallet=None,
-            destination_wallet=wallet,
-            transaction_type=Transaction.TransactionType.DEPOSIT,
-            status=Transaction.TransactionStatus.PENDING,
-            amount=amount,
-            currency=wallet.currency,
-            idempotency_key=idempotency_key,
-            initiated_by=initiated_by,
-        )
+    try:
+        with transaction.atomic():
+            wallet = Wallet.objects.select_for_update().get(pk=wallet.pk)
+            existing_transaction = Transaction.objects.filter(
+                idempotency_key=idempotency_key
+            ).first()
+            if existing_transaction:
+                return existing_transaction
+            new_transaction = Transaction.objects.create(
+                source_wallet=None,
+                destination_wallet=wallet,
+                transaction_type=Transaction.TransactionType.DEPOSIT,
+                status=Transaction.TransactionStatus.PENDING,
+                amount=amount,
+                currency=wallet.currency,
+                idempotency_key=idempotency_key,
+                initiated_by=initiated_by,
+            )
 
-        LedgerEntry.objects.create(
-            transaction=new_transaction,
-            wallet=wallet,
-            entry_type=LedgerEntry.EntryType.CREDIT,
-            amount=amount,
-        )
-        wallet.balance += amount
-        wallet.save(update_fields=["balance", "updated_at"])
-        new_transaction.status = Transaction.TransactionStatus.COMPLETED
-        new_transaction.completed_at = timezone.now()
-        new_transaction.save(update_fields=["status", "completed_at"])
-        transaction.on_commit(
-        lambda: invalidate_user_wallet_cache(
-        user_id=wallet.user_id, # pyright: ignore[reportAttributeAccessIssue]
-        wallet_id=wallet.id, # pyright: ignore[reportAttributeAccessIssue]
+            LedgerEntry.objects.create(
+                transaction=new_transaction,
+                wallet=wallet,
+                entry_type=LedgerEntry.EntryType.CREDIT,
+                amount=amount,
+            )
+            wallet.balance += amount
+            wallet.save(update_fields=["balance", "updated_at"])
+            new_transaction.status = Transaction.TransactionStatus.COMPLETED
+            new_transaction.completed_at = timezone.now()
+            new_transaction.save(update_fields=["status", "completed_at"])
+            transaction.on_commit(
+            lambda: invalidate_user_wallet_cache(
+            user_id=wallet.user_id, # pyright: ignore[reportAttributeAccessIssue]
+            wallet_id=wallet.id, # pyright: ignore[reportAttributeAccessIssue]
+                    )
+            )
+            transaction.on_commit(
+            lambda: invalidate_user_transaction_cache(
+            user_id=initiated_by.id,
+            transaction_id=new_transaction.id, # pyright: ignore[reportAttributeAccessIssue]
                 )
-        )
-        transaction.on_commit(
-        lambda: invalidate_user_transaction_cache(
-        user_id=initiated_by.id,
-        transaction_id=new_transaction.id, # pyright: ignore[reportAttributeAccessIssue]
             )
-        )
-        transaction.on_commit(
-        lambda: send_notification(
-        user_id=wallet.user_id, # type: ignore
-        data={
-            "type": "deposit",
-            "message": f"{amount} {wallet.currency} به کیف پول شما واریز شد.",
-            "transaction_id": new_transaction.id, # type: ignore
-                },
+            transaction.on_commit(
+            lambda: send_notification(
+            user_id=wallet.user_id, # type: ignore
+            data={
+                "type": "deposit",
+                "message": f"{amount} {wallet.currency} به کیف پول شما واریز شد.",
+                "transaction_id": new_transaction.id, # type: ignore
+                    },
+                )
             )
+            transaction.on_commit(
+                lambda: logger.info(
+                        "Deposit completed:transaction_id = %s wallet_id=%s amount=%s currency=%s",
+                        new_transaction.id, # type: ignore
+                        wallet.id, # type: ignore
+                        amount,
+                        wallet.currency,
+                )
+            )        
+            return new_transaction
+    except Exception:
+        logger.exception(
+            "Unexpcted error during deposit: "
+            "wallet_id=%s amount=%s currency=%s ",
+            wallet.id, # type: ignore
+            wallet.currency,
+            amount
         )
-        return new_transaction
+        raise
 
 
 def withdraw(
@@ -85,60 +105,79 @@ def withdraw(
 ):
     if amount <= 0:
         raise ValueError("Withdraw amount must be greater than zero.")
-    with transaction.atomic():
-        wallet = Wallet.objects.select_for_update().get(pk=wallet.pk)
-        existing_transaction = Transaction.objects.filter(
-            idempotency_key=idempotency_key).first()
-        if existing_transaction:
-            return existing_transaction
-        if amount > wallet.balance:
-            raise ValueError("Insufficent wallet balance.")
-        new_transaction = Transaction.objects.create(
-            source_wallet=wallet,
-            destination_wallet=None,
-            transaction_type=Transaction.TransactionType.WITHDRAW,
-            status=Transaction.TransactionStatus.PENDING,
-            amount=amount,
-            currency=wallet.currency,
-            idempotency_key=idempotency_key,
-            initiated_by=initiated_by,
-        )
-
-        LedgerEntry.objects.create(
-            transaction=new_transaction,
-            wallet=wallet,
-            entry_type=LedgerEntry.EntryType.DEBIT,
-            amount=amount,
-        )
-        wallet.balance -= amount
-        wallet.save(update_fields=["balance", "updated_at"])
-        new_transaction.status = Transaction.TransactionStatus.COMPLETED
-        new_transaction.completed_at = timezone.now()
-        new_transaction.save(update_fields=["status", "completed_at"])
-        transaction.on_commit(
-        lambda: invalidate_user_wallet_cache(
-        user_id=wallet.user_id, # pyright: ignore[reportAttributeAccessIssue]
-        wallet_id=wallet.id, # pyright: ignore[reportAttributeAccessIssue]
+    try:
+        with transaction.atomic():
+            wallet = Wallet.objects.select_for_update().get(pk=wallet.pk)
+            existing_transaction = Transaction.objects.filter(
+                idempotency_key=idempotency_key).first()
+            if existing_transaction:
+                return existing_transaction
+            if amount > wallet.balance:
+                raise ValueError("Insufficent wallet balance.")
+            new_transaction = Transaction.objects.create(
+                source_wallet=wallet,
+                destination_wallet=None,
+                transaction_type=Transaction.TransactionType.WITHDRAW,
+                status=Transaction.TransactionStatus.PENDING,
+                amount=amount,
+                currency=wallet.currency,
+                idempotency_key=idempotency_key,
+                initiated_by=initiated_by,
             )
-        )
 
-        transaction.on_commit(
-        lambda: invalidate_user_transaction_cache(
-        user_id=initiated_by.id,
-        transaction_id=new_transaction.id, # pyright: ignore[reportAttributeAccessIssue]
+            LedgerEntry.objects.create(
+                transaction=new_transaction,
+                wallet=wallet,
+                entry_type=LedgerEntry.EntryType.DEBIT,
+                amount=amount,
             )
+            wallet.balance -= amount
+            wallet.save(update_fields=["balance", "updated_at"])
+            new_transaction.status = Transaction.TransactionStatus.COMPLETED
+            new_transaction.completed_at = timezone.now()
+            new_transaction.save(update_fields=["status", "completed_at"])
+            transaction.on_commit(
+            lambda: invalidate_user_wallet_cache(
+            user_id=wallet.user_id, # pyright: ignore[reportAttributeAccessIssue]
+            wallet_id=wallet.id, # pyright: ignore[reportAttributeAccessIssue]
+                )
+            )
+
+            transaction.on_commit(
+            lambda: invalidate_user_transaction_cache(
+            user_id=initiated_by.id,
+            transaction_id=new_transaction.id, # pyright: ignore[reportAttributeAccessIssue]
+                )
+            )
+            transaction.on_commit(
+            lambda: send_notification(
+            user_id=wallet.user_id, # type: ignore
+            data={
+                "type": "withdraw",
+                "message": f"{amount} {wallet.currency} از کیف پول شما برداشت شد.",
+                "transaction_id": new_transaction.id, # type: ignore
+                },
+            )
+            )
+            transaction.on_commit(
+                lambda: logger.info(
+                        "Withdraw completed:transaction_id = %s wallet_id=%s amount=%s currency=%s",
+                        new_transaction.id, # type: ignore
+                        wallet.id, # type: ignore
+                        amount,
+                        wallet.currency,
+                )
+            )               
+            return new_transaction
+    except Exception:
+        logger.exception(
+            "Unexpected error during withdraw: "
+            "wallet_id=%s amount=%s currency=%s",
+            wallet.id, # type: ignore
+            wallet.currency,
+            amount,
         )
-        transaction.on_commit(
-        lambda: send_notification(
-        user_id=wallet.user_id, # type: ignore
-        data={
-            "type": "withdraw",
-            "message": f"{amount} {wallet.currency} از کیف پول شما برداشت شد.",
-            "transaction_id": new_transaction.id, # type: ignore
-            },
-        )
-        )
-        return new_transaction
+        raise
 
 
 def transfer(
@@ -152,113 +191,136 @@ def transfer(
     if amount <= 0:
         raise ValueError("Transfer amount must be greater than zero.")
     # Check idempotency
-    with transaction.atomic():
-        existing_transaction = Transaction.objects.filter(
-            idempotency_key=idempotency_key
-        ).first()
-        # Both wallets must use same currency
-        if existing_transaction:
-            return existing_transaction
-        if source_wallet.currency != destination_wallet.currency:
-            raise ValueError("Wallet currencies must match.")
-        # Always lock wallets in a fixed order to prevent deadlocks
-        first_wallet, second_wallet = sorted(
-            [source_wallet, destination_wallet], key=lambda wallet: wallet.pk
-        )
-        first_wallet = Wallet.objects.select_for_update().get(pk=first_wallet.pk)
-        second_wallet = Wallet.objects.select_for_update().get(pk=second_wallet.pk)
-        # Use the locked wallet objects
-        if source_wallet.pk == first_wallet.pk:
-            source_wallet = first_wallet
-            destination_wallet = second_wallet
-        else:
-            source_wallet = second_wallet
-            destination_wallet = first_wallet
-        # Check source wallet balance after locking
-        if amount > source_wallet.balance:
-            raise ValueError("Insufficent wallet balance.")
-        if source_wallet == destination_wallet:
-            raise ValueError("Cannot transfer to the same wallet.")
-        # Create one transaction for the whole transfer
-        new_transaction = Transaction.objects.create(
-            source_wallet=source_wallet,
-            destination_wallet=destination_wallet,
-            transaction_type=Transaction.TransactionType.TRANSFER,
-            status=Transaction.TransactionStatus.PENDING,
-            amount=amount,
-            currency=source_wallet.currency,
-            idempotency_key=idempotency_key,
-            initiated_by=initiated_by,
-        )
-        # Source wallet loses money
-        LedgerEntry.objects.create(
-            transaction=new_transaction,
-            wallet=source_wallet,
-            entry_type=LedgerEntry.EntryType.DEBIT,
-            amount=amount,
-        )
-        # Destination wallet receives money
-        LedgerEntry.objects.create(
-            transaction=new_transaction,
-            wallet=destination_wallet,
-            entry_type=LedgerEntry.EntryType.CREDIT,
-            amount=amount,
-        )
-        # Update balances
-        source_wallet.balance -= amount
-        destination_wallet.balance += amount
-        source_wallet.save(update_fields=["balance", "updated_at"])
-        destination_wallet.save(update_fields=["balance", "updated_at"])
+    try:
+        with transaction.atomic():
+            existing_transaction = Transaction.objects.filter(
+                idempotency_key=idempotency_key
+            ).first()
+            # Both wallets must use same currency
+            if existing_transaction:
+                return existing_transaction
+            if source_wallet.currency != destination_wallet.currency:
+                raise ValueError("Wallet currencies must match.")
+            # Always lock wallets in a fixed order to prevent deadlocks
+            first_wallet, second_wallet = sorted(
+                [source_wallet, destination_wallet], key=lambda wallet: wallet.pk
+            )
+            first_wallet = Wallet.objects.select_for_update().get(pk=first_wallet.pk)
+            second_wallet = Wallet.objects.select_for_update().get(pk=second_wallet.pk)
+            # Use the locked wallet objects
+            if source_wallet.pk == first_wallet.pk:
+                source_wallet = first_wallet
+                destination_wallet = second_wallet
+            else:
+                source_wallet = second_wallet
+                destination_wallet = first_wallet
+            # Check source wallet balance after locking
+            if amount > source_wallet.balance:
+                raise ValueError("Insufficent wallet balance.")
+            if source_wallet == destination_wallet:
+                raise ValueError("Cannot transfer to the same wallet.")
+            # Create one transaction for the whole transfer
+            new_transaction = Transaction.objects.create(
+                source_wallet=source_wallet,
+                destination_wallet=destination_wallet,
+                transaction_type=Transaction.TransactionType.TRANSFER,
+                status=Transaction.TransactionStatus.PENDING,
+                amount=amount,
+                currency=source_wallet.currency,
+                idempotency_key=idempotency_key,
+                initiated_by=initiated_by,
+            )
+            # Source wallet loses money
+            LedgerEntry.objects.create(
+                transaction=new_transaction,
+                wallet=source_wallet,
+                entry_type=LedgerEntry.EntryType.DEBIT,
+                amount=amount,
+            )
+            # Destination wallet receives money
+            LedgerEntry.objects.create(
+                transaction=new_transaction,
+                wallet=destination_wallet,
+                entry_type=LedgerEntry.EntryType.CREDIT,
+                amount=amount,
+            )
+            # Update balances
+            source_wallet.balance -= amount
+            destination_wallet.balance += amount
+            source_wallet.save(update_fields=["balance", "updated_at"])
+            destination_wallet.save(update_fields=["balance", "updated_at"])
 
-        # Complete transaction
-        new_transaction.status = Transaction.TransactionStatus.COMPLETED
-        new_transaction.completed_at = timezone.now()
-        new_transaction.save(update_fields=["status", "completed_at"])
-        transaction.on_commit(
-            lambda:invalidate_user_wallet_cache(
-                user_id=initiated_by.id,
-                wallet_id=source_wallet.id # pyright: ignore[reportAttributeAccessIssue]
-            )
-        )
-        transaction.on_commit(
-            lambda:invalidate_user_wallet_cache(
-                user_id=initiated_by.id,
-                wallet_id=destination_wallet.id # pyright: ignore[reportAttributeAccessIssue]
-            )
-        )
-        transaction.on_commit(
-            lambda:invalidate_user_transaction_cache(
-                user_id=initiated_by.id,
-                transaction_id=new_transaction.id # pyright: ignore[reportAttributeAccessIssue]
-            )
-        )
-        transaction.on_commit(
-        lambda: send_notification(
-        user_id=source_wallet.user_id, # type: ignore
-        data={
-            "type": "transfer",
-            "message": (
-                f"{amount} {source_wallet.currency} "
-                f"به کیف پول مقصد منتقل شد."
-            ),
-            "transaction_id": new_transaction.id, # type: ignore
-                    },
-            )
-        )
-        transaction.on_commit(
-        lambda: send_notification(
-        user_id=destination_wallet.user_id, # type: ignore
-        data={
-            "type": "transfer",
-            "message": (
-                f"{amount} {destination_wallet.currency} "
-                f"به کیف پول شما واریز شد."
-            ),
-            "transaction_id": new_transaction.id, # type: ignore
-                    },
+            # Complete transaction
+            new_transaction.status = Transaction.TransactionStatus.COMPLETED
+            new_transaction.completed_at = timezone.now()
+            new_transaction.save(update_fields=["status", "completed_at"])
+            transaction.on_commit(
+                lambda:invalidate_user_wallet_cache(
+                    user_id=initiated_by.id,
+                    wallet_id=source_wallet.id # pyright: ignore[reportAttributeAccessIssue]
                 )
-        )       
-        return new_transaction
+            )
+            transaction.on_commit(
+                lambda:invalidate_user_wallet_cache(
+                    user_id=initiated_by.id,
+                    wallet_id=destination_wallet.id # pyright: ignore[reportAttributeAccessIssue]
+                )
+            )
+            transaction.on_commit(
+                lambda:invalidate_user_transaction_cache(
+                    user_id=initiated_by.id,
+                    transaction_id=new_transaction.id # pyright: ignore[reportAttributeAccessIssue]
+                )
+            )
+            transaction.on_commit(
+            lambda: send_notification(
+            user_id=source_wallet.user_id, # type: ignore
+            data={
+                "type": "transfer",
+                "message": (
+                    f"{amount} {source_wallet.currency} "
+                    f"به کیف پول مقصد منتقل شد."
+                ),
+                "transaction_id": new_transaction.id, # type: ignore
+                        },
+                )
+            )
+            transaction.on_commit(
+            lambda: send_notification(
+            user_id=destination_wallet.user_id, # type: ignore
+            data={
+                "type": "transfer",
+                "message": (
+                    f"{amount} {destination_wallet.currency} "
+                    f"به کیف پول شما واریز شد."
+                ),
+                "transaction_id": new_transaction.id, # type: ignore
+                        },
+                    )
+            )
+            transaction.on_commit(
+                lambda: logger.info(
+                    "Transfer completed: transaction_id=%s source_wallet_id=%s "
+                    "destination_wallet_id=%s amount=%s currency=%s",
+                    new_transaction.id, # type: ignore
+                    source_wallet.id, # type: ignore
+                    destination_wallet.id, # type: ignore
+                    amount,
+                    source_wallet.currency,
+                )
+            )
+            return new_transaction
+    except Exception:
+        logger.exception(
+            "Unexpected error during transfer: "
+            "source_wallet_id=%s destination_wallet_id=%s "
+            "amount=%s currency=%s",
+            source_wallet.id, # type: ignore
+            destination_wallet.id, # type: ignore
+            amount,
+            source_wallet.currency,
+        )
+        raise
 
 def get_frequent_recipients(user,currency,limit=10):
     return(

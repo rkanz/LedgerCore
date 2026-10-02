@@ -177,7 +177,8 @@ def test_get_month_date_range_invalid_month():
 @pytest.mark.django_db
 def test_get_monthly_report(wallets,user,ledger_entries):
     wallet=wallets[Wallet.Currency.USDT]
-    result=get_monthly_report(wallet,"2026-09")
+    current_month = timezone.localdate().strftime("%Y-%m")
+    result = get_monthly_report(wallet, current_month)
     assert result["income"] == Decimal("100")
     assert result["expense"] == Decimal("50")
     assert result["expenses_by_category"] == {"OTHER":Decimal("50")}
@@ -185,7 +186,8 @@ def test_get_monthly_report(wallets,user,ledger_entries):
 @pytest.mark.django_db
 def test_get_monthly_report_multiple_categories(wallets,user,ledger_entries_multiple_categories):
     wallet=wallets[Wallet.Currency.USDT]
-    result=get_monthly_report(wallet,"2026-09")
+    current_month = timezone.localdate().strftime("%Y-%m")
+    result = get_monthly_report(wallet, current_month)
     assert result["expense"] == Decimal("80")
     assert result["expenses_by_category"] == {"FOOD":Decimal("50"),"HEALTH":Decimal("30")}
     assert result["income"] == Decimal("0")

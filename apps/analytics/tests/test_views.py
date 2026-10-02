@@ -49,11 +49,11 @@ def test_summary_api(api_client,ledger_entries):
     assert response.data["summary"]["expense"] == Decimal("50")
 
 @pytest.mark.django_db
-def test_income_custom_date_range(api_client,ledger_entries):
+def test_income_custom_date_range(api_client,ledger_entries,current_month):
     response=api_client.get(reverse("analytics:income"),{
         "currency":"USDT",
-        "start_date": "2026-09-01",
-        "end_date": "2026-09-30",
+        "start_date": current_month["start_date"].isoformat(),
+        "end_date": current_month["end_date"].isoformat(),
     })
     assert response.status_code == 200
     assert response.data["income"] == Decimal("100")
@@ -149,11 +149,11 @@ def test_expense_invalid_date_range(api_client, ledger_entries):
     assert response.data["detail"] == "start_date cant be after end_date ."
 
 @pytest.mark.django_db
-def test_expense_custom_date_range(api_client,ledger_entries):
+def test_expense_custom_date_range(api_client,ledger_entries,current_month):
     response=api_client.get(reverse("analytics:expense"),{
         "currency":"USDT",
-        "start_date": "2026-09-01",
-        "end_date": "2026-09-30",
+            "start_date": current_month["start_date"].isoformat(),
+            "end_date": current_month["end_date"].isoformat(),
     })
     assert response.status_code == 200
     assert response.data["expense"] == Decimal("50")
@@ -222,11 +222,11 @@ def test_expense_invalid_date_format(api_client,ledger_entries):
 
 
 @pytest.mark.django_db
-def test_summary_custom_date_range(api_client,ledger_entries):
+def test_summary_custom_date_range(api_client,ledger_entries,current_month):
     response=api_client.get(reverse("analytics:summary"),{
         "currency":"USDT",
-        "start_date": "2026-09-01",
-        "end_date": "2026-09-30",
+            "start_date": current_month["start_date"].isoformat(),
+            "end_date": current_month["end_date"].isoformat(),
     })
     assert response.status_code == 200
     assert response.data["summary"] == {
@@ -311,16 +311,16 @@ def test_summary_invalid_date_range(api_client, ledger_entries):
     assert response.data["detail"] == "start_date cant be after end_date ."
 
 @pytest.mark.django_db
-def test_monthly_report(api_client,ledger_entries,wallets):
+def test_monthly_report(api_client,ledger_entries,wallets,current_month):
     response=api_client.get(reverse("analytics:monthly-report"),{
         "currency":"USDT", 
-        "month":"2026-09"
+        "month":current_month["month"]
     })
     assert response.status_code == 200
     assert response.data["expense"] == Decimal("50")
     assert response.data["income"] == Decimal("100")
     assert response.data["expenses_by_category"] == {"OTHER":Decimal("50")}
-    assert response.data["month"] == "2026-09"
+    assert response.data["month"] == current_month["month"]
 
 @pytest.mark.django_db
 def test_monthly_report_currency_is_required(api_client,ledger_entries,wallets):
@@ -331,7 +331,7 @@ def test_monthly_report_currency_is_required(api_client,ledger_entries,wallets):
     assert response.data["detail"] == "currency is required."
 
 @pytest.mark.django_db
-def test_monthly_report_default_current_month(api_client,ledger_entries,wallets):
+def test_monthly_report_default_current_month(api_client,ledger_entries,wallets,current_month):
     response=api_client.get(reverse("analytics:monthly-report"),{
         "currency":"USDT", 
     })
@@ -339,7 +339,7 @@ def test_monthly_report_default_current_month(api_client,ledger_entries,wallets)
     assert response.data["expense"] == Decimal("50")
     assert response.data["income"] == Decimal("100")
     assert response.data["expenses_by_category"] == {"OTHER":Decimal("50")}
-    assert response.data["month"] == "2026-09"
+    assert response.data["month"] == current_month["month"]
     assert response.data["month"] == timezone.now().strftime("%Y-%m")
 
 

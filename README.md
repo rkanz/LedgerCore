@@ -16,6 +16,8 @@ The project provides multi-currency wallets, financial transactions, cryptocurre
 * **Django Channels**
 * **WebSocket**
 * **Docker / Docker Compose**
+* **Nginx**
+* **HTTPS / SSL**
 * **JWT Authentication**
 * **DRF Spectacular**
 * **OpenAPI**
@@ -327,6 +329,38 @@ PUT   /api/transactions/{id}/
 PATCH /api/transactions/{id}/
 ```
 
+**## Production Deployment**
+
+LedgerCore includes a production-like deployment setup using **Docker Compose**.
+
+Implemented infrastructure and deployment features:
+
+* **PostgreSQL**
+* **Redis**
+* **Nginx**
+* **HTTPS / SSL**
+* **Celery Worker**
+* **Celery Beat**
+* **WebSocket through Nginx**
+* **Environment variables and secrets**
+* **Application logging**
+* **Health check**
+* **Database backup and restore**
+
+**### Health Check**
+
+The health check endpoint verifies the availability of the application, PostgreSQL, and Redis.
+
+```text
+GET /api/health/
+```
+
+**### Database Backup**
+
+PostgreSQL database backups are created using `pg_dump` with the custom archive format and can be restored using `pg_restore`.
+
+The backup and restore process has been verified using real application data.
+
 ## Testing
 
 The project uses **Pytest** with `pytest-django`, `pytest-asyncio`, and `pytest-cov`.
@@ -360,6 +394,6 @@ Tests cover the main business, API, background-task, analytics, and real-time fl
 
 Current test suite:
 
-**156 tests — 98% overall coverage**
+**159 tests passing-98% coverage**
 
 The goal is to test important business behavior and prevent financial logic bugs rather than artificially maximizing code coverage.

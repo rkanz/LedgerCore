@@ -20,9 +20,12 @@ urlpatterns = [
     path('api/exchange/',include('apps.exchange.urls')),
     path('api/wallets/',include('apps.wallets.urls')),
     path('api/analytics/',include('apps.analytics.urls')),
-    
+    path('api/health/',include('apps.health.urls')),
+        
     path('api/schema/',SpectacularAPIView.as_view(),name="schema"),
     path('api/docs/',SpectacularRedocView.as_view(url_name='schema'),name="redoc"),
     path('api/swagger/',SpectacularSwaggerView.as_view(url_name='schema'),name='swagger-ui'),
+
+    path('api/health/',include('apps.health.urls'))
     
 ]

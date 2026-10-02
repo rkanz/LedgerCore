@@ -1,7 +1,10 @@
+import logging
+
 from celery import shared_task
 
 from apps.exchange.services import save_exchange_rate
 
+logger = logging.getLogger(__name__)
 
 @shared_task(
     bind=True,
@@ -15,6 +18,12 @@ def update_exchange_rate(
     exchange_rate=save_exchange_rate(
         base_currency=base_currency,
         quote_currency=quote_currency
+    )
+    logger.info(
+        "Exchange rate updated: base=%s,quote=%s rate=%s",
+        exchange_rate.base_currency,
+        exchange_rate.quote_currency,
+        exchange_rate.rate,
     )
 
     return {
