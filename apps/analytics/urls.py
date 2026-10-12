@@ -9,5 +9,6 @@ urlpatterns=[
     path('expense/',views.expense_view,name='expense'),
     path('summary/',views.summary_view,name='summary'),
     path('monthly-report/',views.monthly_report_view,name='monthly-report'),
-    path('balance-history/',views.balance_history_view,name='balance-history')
+    path('balance-history/',views.balance_history_view,name='balance-history'),
+    path('ai-summary/',views.ai_summary_view,name='ai-summary'),
 ]

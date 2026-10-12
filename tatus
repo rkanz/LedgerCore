@@ -1,0 +1,10 @@
+warning: in the working copy of 'apps/analytics/views.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/exchange/views.py', LF will be replaced by CRLF the next time Git touches it
+README.md:46: trailing whitespace.
+[32m+[m[32m             Serializers /         │[m[41m [m
+README.md:412: trailing whitespace.
+[32m+[m[41m  [m
+apps/analytics/services.py:275: trailing whitespace.
+[32m+[m[32m    }[m[41m        [m
+apps/exchange/serializers.py:69: trailing whitespace.
+[32m+[m[32m        read_only_fields=[[m[41m            [m

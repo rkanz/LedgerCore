@@ -8,13 +8,14 @@ from apps.analytics.services import (
     get_balance_history,
     get_date_range,
     get_expense,
+    get_financial_summary,
     get_income,
     get_month_date_range,
     get_monthly_report,
     get_summary,
     resolve_date_range,
 )
-from apps.transactions.models import LedgerEntry
+from apps.transactions.models import Category, LedgerEntry
 from apps.wallets.models import Wallet
 
 
@@ -97,7 +98,7 @@ def test_resolve_date_range_invalid():
     end_date=date(2026,1,15)
     with pytest.raises(
         ValueError,
-        match="start_date cant be after end_date ."
+        match="start_date cannot be after end_date."
     ):
         resolve_date_range(
             start_date=start_date,
@@ -127,7 +128,7 @@ def test_resolve_date_range_invalid_start_date():
     end_date=date(2025,2,3)
     with pytest.raises(
         ValueError,
-        match="start_date cant be after end_date ."
+        match="start_date cannot be after end_date."
     ):
         resolve_date_range(
             start_date=start_date,
@@ -295,4 +296,162 @@ def test_get_balance_history_combines_entries_from_same_day(user,wallets,create_
             "balance":Decimal("400")
         }
     ]
-  
+
+@pytest.mark.django_db
+def test_financial_summary_month(
+    wallets,user,create_ledger_entry
+):
+    wallet=wallets[Wallet.Currency.USDT]
+    today=timezone.localdate()
+    current_month_start=today.replace(day=1)
+    create_ledger_entry(
+        wallet=wallet,
+        user=user,
+        amount="100",
+        entry_type=LedgerEntry.EntryType.CREDIT,
+        created_at=timezone.make_aware(
+            timezone.datetime.combine(
+                current_month_start,
+                timezone.datetime.min.time(),
+            )
+        )
+    )
+    create_ledger_entry(
+        user=user,
+        wallet=wallet,
+        amount="30",
+        entry_type=LedgerEntry.EntryType.DEBIT,
+        created_at=timezone.now(),
+    )
+    result=get_financial_summary(
+        wallet=wallet,
+        period="month"
+    )
+    assert result["income"] == Decimal("100")
+    assert result["expense"] == Decimal("30")
+    assert result["expenses_by_category"] == {
+        Category.OTHER:Decimal("30")
+    }
+    assert result["net"] == Decimal("70")
+
+@pytest.mark.django_db
+def test_financial_summary_week(
+    wallets,user,create_ledger_entry
+):
+    wallet=wallets[Wallet.Currency.USDT]
+    now=timezone.now()
+    create_ledger_entry(
+        wallet=wallet,
+        user=user,
+        amount="100",
+        entry_type=LedgerEntry.EntryType.CREDIT,
+        created_at=now - timezone.timedelta(days=6)
+    )
+    create_ledger_entry(
+        wallet=wallet,
+        user=user,
+        amount="50",
+        entry_type=LedgerEntry.EntryType.CREDIT,
+        created_at=now - timezone.timedelta(days=8)
+    )
+    result=get_financial_summary(
+        wallet=wallet,
+        period="week"
+    )
+    assert result["income"] == Decimal("100")
+    assert result["expense"] == Decimal("0")
+    assert result["expenses_by_category"] == {}
+
+
+@pytest.mark.django_db
+def test_financial_summary_year(
+    user,wallets,create_ledger_entry
+):
+    wallet=wallets[Wallet.Currency.USDT]
+    now=timezone.now()
+    create_ledger_entry(
+        wallet=wallet,
+        user=user,
+        amount="100",
+        entry_type=LedgerEntry.EntryType.CREDIT,
+        created_at=now,
+    )
+    create_ledger_entry(
+        user=user,
+        wallet=wallet,
+        amount="100",
+        entry_type=LedgerEntry.EntryType.CREDIT,
+        created_at=now.replace(year=now.year - 1),
+    )
+    result=get_financial_summary(
+        wallet=wallet,
+        period="year"
+    )
+    assert result["income"] == Decimal("100")
+    assert result["expense"] == Decimal("0")
+    assert result["expenses_by_category"] == {}
+
+@pytest.mark.django_db
+def test_financial_summary_custom(
+    wallets,user,create_ledger_entry
+):
+    wallet=wallets[Wallet.Currency.USDT]
+    today=timezone.localdate()
+    start_date=today - timezone.timedelta(days=5)
+    end_date=today - timezone.timedelta(days=2)
+    create_ledger_entry(
+        user=user,
+        wallet=wallet,
+        amount="100",
+        entry_type=LedgerEntry.EntryType.CREDIT,
+        created_at=timezone.make_aware(
+            timezone.datetime.combine(
+                start_date,
+                timezone.datetime.min.time(),
+            )
+        ),
+    )
+    create_ledger_entry(
+        user=user,
+        wallet=wallet,
+        amount="50",
+        entry_type=LedgerEntry.EntryType.CREDIT,
+        created_at=timezone.make_aware(
+            timezone.datetime.combine(
+                end_date,
+                timezone.datetime.min.time(),
+            )
+        ),
+    )
+    create_ledger_entry(
+        user=user,
+        wallet=wallet,
+        amount="25",
+        entry_type=LedgerEntry.EntryType.CREDIT,
+        created_at=timezone.make_aware(
+            timezone.datetime.combine(
+                start_date - timezone.timedelta(days=1),
+                timezone.datetime.min.time(),
+            )
+        ),
+    )
+    create_ledger_entry(
+        user=user,
+        wallet=wallet,
+        amount="75",
+        entry_type=LedgerEntry.EntryType.CREDIT,
+        created_at=timezone.make_aware(
+            timezone.datetime.combine(
+                end_date + timezone.timedelta(days=1),
+                timezone.datetime.min.time(),
+            )
+        ),
+    )
+    result=get_financial_summary(
+        wallet=wallet,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    assert result["income"] == Decimal("150")
+    assert result["expense"] == Decimal("0")
+    assert result["expenses_by_category"] == {}

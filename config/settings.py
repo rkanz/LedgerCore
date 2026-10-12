@@ -37,7 +37,8 @@ INSTALLED_APPS = [
     'channels',
     'apps.realtime',
     'apps.analytics',
-    'apps.health'
+    'apps.health',
+    'apps.ai'
 ]
 
 MIDDLEWARE = [
@@ -197,3 +198,6 @@ LOGGING = {
         },
     },
 }
+CLOUDFLARE_ACCOUNT_ID = env("CLOUDFLARE_ACCOUNT_ID")
+CLOUDFLARE_API_TOKEN = env("CLOUDFLARE_API_TOKEN")
+CLOUDFLARE_AI_MODEL = env("CLOUDFLARE_AI_MODEL")

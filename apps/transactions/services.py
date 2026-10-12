@@ -5,6 +5,7 @@ from django.db import transaction
 from django.db.models import Count, OuterRef, Q, Subquery
 from django.utils import timezone
 
+from apps.ai.services import safe_categorize_transaction
 from apps.realtime.realtime import send_notification
 from apps.wallets.cache import invalidate_user_wallet_cache
 from apps.wallets.models import Wallet
@@ -20,6 +21,7 @@ def deposit(
     amount: Decimal,
     idempotency_key,
     initiated_by,
+    description="",
 ):
     if amount <= 0:
         raise ValueError("Deposit amount must be greater than zero.")
@@ -40,6 +42,7 @@ def deposit(
                 currency=wallet.currency,
                 idempotency_key=idempotency_key,
                 initiated_by=initiated_by,
+                description=description,
             )
 
             LedgerEntry.objects.create(
@@ -83,6 +86,9 @@ def deposit(
                         amount,
                         wallet.currency,
                 )
+            )
+            transaction.on_commit(
+                lambda: safe_categorize_transaction(new_transaction.id) # type: ignore
             )        
             return new_transaction
     except Exception:
@@ -102,6 +108,7 @@ def withdraw(
     amount: Decimal,
     idempotency_key,
     initiated_by,
+    description="",
 ):
     if amount <= 0:
         raise ValueError("Withdraw amount must be greater than zero.")
@@ -123,6 +130,7 @@ def withdraw(
                 currency=wallet.currency,
                 idempotency_key=idempotency_key,
                 initiated_by=initiated_by,
+                description=description
             )
 
             LedgerEntry.objects.create(
@@ -167,6 +175,9 @@ def withdraw(
                         amount,
                         wallet.currency,
                 )
+            )
+            transaction.on_commit(
+                lambda:safe_categorize_transaction(new_transaction.id) # type: ignore
             )               
             return new_transaction
     except Exception:
@@ -187,6 +198,7 @@ def transfer(
     amount: Decimal,
     idempotency_key,
     initiated_by,
+    description="",
 ):
     if amount <= 0:
         raise ValueError("Transfer amount must be greater than zero.")
@@ -229,6 +241,7 @@ def transfer(
                 currency=source_wallet.currency,
                 idempotency_key=idempotency_key,
                 initiated_by=initiated_by,
+                description=description,
             )
             # Source wallet loses money
             LedgerEntry.objects.create(
@@ -308,6 +321,9 @@ def transfer(
                     amount,
                     source_wallet.currency,
                 )
+            )
+            transaction.on_commit(
+                lambda: safe_categorize_transaction(new_transaction.id) # type: ignore
             )
             return new_transaction
     except Exception:

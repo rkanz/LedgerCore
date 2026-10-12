@@ -1,10 +1,12 @@
-
 from datetime import date, datetime
 from decimal import Decimal
+from unittest.mock import patch
 
+import httpx
 import pytest
 from django.urls import reverse
 from django.utils import timezone
+from rest_framework.test import APIClient
 
 from apps.transactions.models import LedgerEntry
 from apps.wallets.models import Wallet
@@ -132,7 +134,7 @@ def test_income_invalid_date_range(api_client, ledger_entries):
     )
 
     assert response.status_code == 400
-    assert response.data["detail"] == "start_date cant be after end_date ."
+    assert response.data["detail"] == "start_date cannot be after end_date."
 
 @pytest.mark.django_db
 def test_expense_invalid_date_range(api_client, ledger_entries):
@@ -146,7 +148,7 @@ def test_expense_invalid_date_range(api_client, ledger_entries):
     )
 
     assert response.status_code == 400
-    assert response.data["detail"] == "start_date cant be after end_date ."
+    assert response.data["detail"] == "start_date cannot be after end_date."
 
 @pytest.mark.django_db
 def test_expense_custom_date_range(api_client,ledger_entries,current_month):
@@ -308,7 +310,7 @@ def test_summary_invalid_date_range(api_client, ledger_entries):
     )
 
     assert response.status_code == 400
-    assert response.data["detail"] == "start_date cant be after end_date ."
+    assert response.data["detail"] == "start_date cannot be after end_date."
 
 @pytest.mark.django_db
 def test_monthly_report(api_client,ledger_entries,wallets,current_month):
@@ -466,3 +468,183 @@ def test_balance_history_wallet_not_found(api_client):
     })
     assert response.status_code == 404
     assert response.data["detail"] == "Wallet not found."
+
+@pytest.mark.django_db
+def test_ai_summary_view(financial_summary_data,api_client):
+
+    response=api_client.get(reverse("analytics:ai-summary"),{
+        "currency":"USDT",
+        "period":"week"
+    })
+    assert response.status_code == 200
+    assert response.data["currency"] == "USDT"
+    assert response.data["period"] == "week"
+    assert response.data["income"] == "3000.00000000"
+    assert response.data["expense"] == "1050.00000000"
+    assert response.data["net"] == "1950.00000000"
+    assert "start_date" in response.data
+    assert "end_date" in response.data
+    assert "expenses_by_category" in response.data
+
+    assert isinstance(response.data["expenses_by_category"], dict)
+    assert isinstance(response.data["summary"], str)
+    assert isinstance(response.data["insights"], list)
+    assert isinstance(response.data["recommendations"], list)
+
+@pytest.mark.django_db
+def test_ai_summary_view_with_custom_dates(financial_summary_data,api_client):
+    response=api_client.get(reverse("analytics:ai-summary"),{
+        "currency":"USDT",
+        "start_date":"2026-01-05",
+        "end_date":"2026-11-08",
+    })
+    assert response.status_code == 200
+    assert response.data["currency"] == "USDT"
+    assert response.data["start_date"].startswith("2026-01-05")
+    assert response.data["end_date"].startswith("2026-11-09")
+    assert "income" in response.data
+    assert "expense" in response.data
+    assert "expenses_by_category" in response.data
+    assert isinstance(response.data["expenses_by_category"], dict)
+    assert isinstance(response.data["summary"], str)
+    assert isinstance(response.data["insights"], list)
+    assert isinstance(response.data["recommendations"], list)
+
+@pytest.mark.django_db
+def test_ai_summary_view_currency_required(financial_summary_data,api_client):
+    response=api_client.get(reverse("analytics:ai-summary"),{
+        "period":"year"
+    })
+    assert response.status_code == 400
+    assert response.data["detail"] == "currency is required."
+
+@pytest.mark.django_db
+def test_ai_summary_view_with_custom_range_and_period(financial_summary_data,api_client):
+    response=api_client.get(reverse("analytics:ai-summary"),{
+        "period":"month",
+        "start_date":"2026-01-01",
+        "end_date":"2026-01-30",
+        "currency":"USDT"
+    })
+    assert response.status_code == 400
+    assert response.data["detail"] == "Use either period or start_date/end_date, not both."
+
+@pytest.mark.django_db
+def test_ai_summary_view_invalid_date_format(financial_summary_data,api_client):
+    response=api_client.get(reverse("analytics:ai-summary"),{
+        "currency":"USDT",
+        "start_date":"20-01-2026",
+        "end_date":"2026-01-30"
+    })
+    assert response.status_code == 400
+    assert response.data["detail"] == "Dates must be in YYYY-MM-DD format."
+
+@pytest.mark.django_db
+def test_ai_summary_view_end_date_before_start_date(financial_summary_data,api_client):
+    response=api_client.get(reverse("analytics:ai-summary"),{
+        "currency":"USDT",
+        "start_date":"2026-02-01",
+        "end_date":"2026-01-20"
+    })
+    assert response.status_code == 400
+    assert response.data["detail"] == "start_date cannot be after end_date."
+
+@pytest.mark.django_db
+def test_ai_summary_view_wallet_not_found(api_client,financial_summary_data):
+    response=api_client.get(reverse("analytics:ai-summary"),{
+        "currency":"XYZ",
+        "period":"month"
+    })
+    assert response.status_code == 404
+    assert response.data["detail"] == "Wallet not found."
+
+@pytest.mark.django_db
+def test_ai_summary_view_only_start_date_sent(financial_summary_data,api_client):
+    response=api_client.get(reverse("analytics:ai-summary"),{
+        "currency":"USDT",
+        "start_date":"2026-01-30"
+    })
+    assert response.status_code == 400
+    assert response.data["detail"] =="Both start_date and end_date are required."
+
+@pytest.mark.django_db
+def test_ai_summary_view_only_end_date_sent(financial_summary_data,api_client):
+    response=api_client.get(reverse("analytics:ai-summary"),{
+        "currency":"USDT",
+        "end_date":"2026-01-30"
+    })
+    assert response.status_code == 400
+    assert response.data["detail"] =="Both start_date and end_date are required."
+
+@pytest.mark.django_db
+def test_ai_summay_view_authentication_error(financial_summary_data):
+    client=APIClient()
+    response=client.get(reverse("analytics:ai-summary"),{
+        "currency":"USDT",
+        "start_date":"2026-01-05",
+        "end_date":"2026-11-08",
+    })
+    assert response.status_code == 401 # type: ignore
+
+@pytest.mark.django_db
+def test_ai_summary_view_invalid_period(financial_summary_data,api_client):
+    response=api_client.get(reverse("analytics:ai-summary"),{
+        "currency":"USDT",
+        "period":"invalid"
+    })
+    assert response.status_code == 400
+    assert response.data["detail"] == "Invalid period"
+
+@pytest.mark.django_db
+def test_ai_summary_view_without_transactions(
+    user,
+    wallets,
+    api_client,
+):
+    with patch(
+        "apps.analytics.views.generate_financial_summary",
+    ) as mock_ai:
+        response = api_client.get(
+            reverse("analytics:ai-summary"),
+            {
+                "currency": "USDT",
+                "period": "month",
+            },
+        )
+
+    assert response.status_code == 200
+
+    assert response.data["currency"] == "USDT"
+    assert response.data["period"] == "month"
+
+    assert response.data["income"] == "0.00000000"
+    assert response.data["expense"] == "0.00000000"
+    assert response.data["net"] == "0.00000000"
+    assert response.data["expenses_by_category"] == {}
+
+    assert response.data["summary"] == "No financial activity recorded."
+    assert response.data["insights"] == [
+        "Insufficient data for financial analysis."
+    ]
+    assert response.data["recommendations"] == [
+        "Record transactions to enable analysis."
+    ]
+
+    mock_ai.assert_not_called()
+
+@pytest.mark.django_db
+def test_ai_summary_view_ai_service_unavailable(
+    financial_summary_data,
+    api_client,
+):
+    with patch(
+        "apps.analytics.views.generate_financial_summary",
+        side_effect=httpx.HTTPError("AI service unavailable")
+    )as mock_ai:
+        response=api_client.get(reverse("analytics:ai-summary"),{
+                "currency": "USDT",
+                "period": "week",
+        })
+        assert response.status_code  == 503
+        assert response.data["detail"] == "AI financial summary is temporarily unavailable."
+        mock_ai.assert_called_once()

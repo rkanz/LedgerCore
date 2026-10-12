@@ -24,8 +24,24 @@ class ExchangeSerializer(serializers.Serializer):
         return attrs
 
 class ExchangeTransactionSerializer(serializers.ModelSerializer):
-    transaction_id=serializers.IntegerField(
-        source="transaction.id",read_only=True
+    transaction_id = serializers.IntegerField(
+        source="transaction.id",
+        read_only=True,
+    )
+    category = serializers.CharField(
+        source="transaction.category",
+        read_only=True,
+    )
+    description = serializers.CharField(
+        source="transaction.description",
+        read_only=True,
+    )
+
+    tags = serializers.SlugRelatedField(
+        source="transaction.tags",
+        many=True,
+        slug_field="name",
+        read_only=True,
     )
     source_currency=serializers.SerializerMethodField()
     destination_currency=serializers.SerializerMethodField()
@@ -45,9 +61,22 @@ class ExchangeTransactionSerializer(serializers.ModelSerializer):
             "fee_currency",
             "destination_amount",
             "status",
+            "category",
+            "tags",
+            "description",
             "created_at",
-        ]
-        read_only_fields=fields
+            ]
+        read_only_fields=[            
+            "transaction_id",
+            "source_currency",
+            "destination_currency",
+            "source_amount",
+            "exchange_rate_value",
+            "fee_amount",
+            "fee_currency",
+            "destination_amount",
+            "status",
+            "created_at",]
     def get_source_currency(self, obj)-> str:
         return obj.transaction.source_wallet.currency
 

@@ -1,21 +1,37 @@
 from django.conf import settings
 from django.db import models
+from django.db.models.functions import Lower
 
 from apps.wallets.models import Wallet
 
 
 class Category(models.TextChoices):
-    FOOD = "FOOD", "Food"
-    SHOPPING = "SHOPPING", "Shopping"
+    FOOD = "FOOD","Food"
+    SHOPPING = "SHOPPING","Shopping"
     TRANSPORT = "TRANSPORT", "Transport"
-    BILLS = "BILLS", "Bills"
-    HEALTH = "HEALTH", "Health"
-    HOME = "HOME", "Home"
-    ENTERTAINMENT = "ENTERTAINMENT", "Entertainment"
-    OTHER = "OTHER", "Other"
+    BILLS = "BILLS","Bills"
+    HEALTH = "HEALTH","Health"
+    HOME = "HOME","Home"
+    ENTERTAINMENT = "ENTERTAINMENT","Entertainment"
+    TRAVEL = "TRAVEL","Travel"
+    SALARY = "SALARY", "Salary"
+    TRANSFER = "TRANSFER", "Transfer"
+    OTHER ="OTHER","Other"
 
 class Tag(models.Model):
     name = models.CharField(max_length=20, unique=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                Lower("name"),
+                name="unique_tag_name_ci",
+            )
+        ]
+
+    def save(self, *args, **kwargs):
+        self.name = self.name.strip().lower()
+        super().save(*args, **kwargs)
 
 class Transaction(models.Model):
     class TransactionType(models.TextChoices):
@@ -44,6 +60,7 @@ class Transaction(models.Model):
     initiated_by=models.ForeignKey(settings.AUTH_USER_MODEL,on_delete=models.PROTECT,related_name="initiated_transactions")
     category=models.CharField(choices=Category.choices,default=Category.OTHER,max_length=20)
     tags = models.ManyToManyField(Tag,blank=True,related_name="transactions",)
+    description = models.TextField(blank=True,default="",)
     
 class LedgerEntry(models.Model):
     class EntryType(models.TextChoices):

@@ -43,8 +43,8 @@ The project follows a service-oriented approach inside Django.
                      │             │
              Authentication        │
                      │             │
-             Serializers /        │
-               Validation         │
+             Serializers /         │ 
+               Validation          │
                      │             │
                      ▼             │
                    Views           │
@@ -55,7 +55,7 @@ The project follows a service-oriented approach inside Django.
               ┌──────┴──────┐      │
               │             │      │
               ▼             ▼      │
-         PostgreSQL       Redis ◄───┘
+         PostgreSQL       Redis◄───┘
                             │
                    ┌────────┴────────┐
                    │                 │
@@ -183,6 +183,19 @@ LedgerCore provides recipient insights based on completed transfer history:
 
 Recipient results are wallet-specific and filtered by currency.
 
+## AI Features
+
+LedgerCore includes AI-powered features to help users understand and organize their financial activity.
+
+### Transaction Categorization
+
+AI is used to categorize transactions, reducing the need for users to classify every transaction manually.
+
+### Financial Summary
+
+The `ai-summary` endpoint provides an AI-generated summary of financial activity, complementing the existing analytics endpoints with a natural-language overview of financial data.
+
+
 ## Real-Time Features
 
 LedgerCore uses **Django Channels** and **WebSockets** to provide real-time updates without requiring clients to continuously poll the API.
@@ -303,6 +316,8 @@ API endpoints include:
 * Financial analytics
 * Recipient insights
 * Balance history
+* AI-powered transaction categorization
+* AI financial summary
 
 ### Analytics Endpoints
 
@@ -312,6 +327,7 @@ GET /api/analytics/expense/
 GET /api/analytics/summary/
 GET /api/analytics/monthly-report/
 GET /api/analytics/balance-history/
+GET /api/analytics/ai-summary/
 ```
 
 ### Recipient Endpoints
@@ -329,7 +345,7 @@ PUT   /api/transactions/{id}/
 PATCH /api/transactions/{id}/
 ```
 
-**## Production Deployment**
+## Production Deployment
 
 LedgerCore includes a production-like deployment setup using **Docker Compose**.
 
@@ -347,7 +363,7 @@ Implemented infrastructure and deployment features:
 * **Health check**
 * **Database backup and restore**
 
-**### Health Check**
+### Health Check
 
 The health check endpoint verifies the availability of the application, PostgreSQL, and Redis.
 
@@ -355,7 +371,7 @@ The health check endpoint verifies the availability of the application, PostgreS
 GET /api/health/
 ```
 
-**### Database Backup**
+### Database Backup
 
 PostgreSQL database backups are created using `pg_dump` with the custom archive format and can be restored using `pg_restore`.
 
@@ -391,9 +407,10 @@ Tests cover the main business, API, background-task, analytics, and real-time fl
 * User notifications
 * Notification user isolation
 * Anonymous WebSocket access rejection
-
+* AI transaction categorization
+* AI financial summary
 Current test suite:
 
-**159 tests passing-98% coverage**
+**181 tests passing-98% coverage**
 
 The goal is to test important business behavior and prevent financial logic bugs rather than artificially maximizing code coverage.

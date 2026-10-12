@@ -98,7 +98,7 @@ class WithdrawAPIView(APIView):
             return Response({
                 'detail':'Idempotency-key must be a valid UUID.'
             },status=status.HTTP_400_BAD_REQUEST)
-        currency = serializer.validated_data['currency'] # type: ignore
+        currency = serializer.validated_data['currency']  # type: ignore
         wallet = Wallet.objects.filter(
         user=request.user,
         currency=currency,
@@ -113,6 +113,7 @@ class WithdrawAPIView(APIView):
                 initiated_by=request.user,
                 amount=serializer.validated_data['amount'], # type: ignore
                 idempotency_key=idempotency_key,
+                description = serializer.validated_data.get("description", ""),# type: ignore
             )
         except ValueError as e:
             return Response({
@@ -195,7 +196,8 @@ class DepositAPIView(APIView):
                 amount=serializer.validated_data['amount'], # type: ignore
                 initiated_by=request.user,
                 wallet=wallet,
-                idempotency_key=idempotency_key
+                idempotency_key=idempotency_key,
+                description = serializer.validated_data.get("description", ""), # type: ignore
             )
         except ValueError as e:
                     return Response({
@@ -284,6 +286,7 @@ class TransferAPIView(APIView):
                  amount=serializer.validated_data['amount'],# type: ignore
                  idempotency_key=idempotency_key,
                  initiated_by=request.user,
+                 description = serializer.validated_data.get("description", ""),# type: ignore
             )
         except ValueError as e:
             return Response({
@@ -380,6 +383,8 @@ class TransactionHistoryAPIView(generics.ListAPIView):
     filterset_class=TransactionFilter
     ordering_fields=['amount','completed_at',"created_at"]
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return Transaction.objects.none()
         return Transaction.objects.filter(
             Q(initiated_by=self.request.user)
             |Q(source_wallet__user=self.request.user)

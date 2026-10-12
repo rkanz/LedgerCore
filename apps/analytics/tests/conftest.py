@@ -149,3 +149,68 @@ def current_month():
         "start_date": start_date,
         "end_date": end_date,
     }
+
+@pytest.fixture
+def financial_summary_data(user, wallets, create_ledger_entry):
+    wallet = wallets[Wallet.Currency.USDT]
+
+    income_1 = create_ledger_entry(  # noqa: F841
+        user=user,
+        wallet=wallet,
+        amount="2500",
+        entry_type=LedgerEntry.EntryType.CREDIT,
+    )
+
+    income_2 = create_ledger_entry( # noqa: F841
+        user=user,
+        wallet=wallet,
+        amount="500",
+        entry_type=LedgerEntry.EntryType.CREDIT,
+    )
+
+    food = create_ledger_entry(
+        user=user,
+        wallet=wallet,
+        amount="350",
+        entry_type=LedgerEntry.EntryType.DEBIT,
+    )
+    food.transaction.category = Category.FOOD
+    food.transaction.save(update_fields=["category"])
+
+    transport = create_ledger_entry(
+        user=user,
+        wallet=wallet,
+        amount="120",
+        entry_type=LedgerEntry.EntryType.DEBIT,
+    )
+    transport.transaction.category = Category.TRANSPORT
+    transport.transaction.save(update_fields=["category"])
+
+    bills = create_ledger_entry(
+        user=user,
+        wallet=wallet,
+        amount="300",
+        entry_type=LedgerEntry.EntryType.DEBIT,
+    )
+    bills.transaction.category = Category.BILLS
+    bills.transaction.save(update_fields=["category"])
+
+    shopping = create_ledger_entry(
+        user=user,
+        wallet=wallet,
+        amount="180",
+        entry_type=LedgerEntry.EntryType.DEBIT,
+    )
+    shopping.transaction.category = Category.SHOPPING
+    shopping.transaction.save(update_fields=["category"])
+
+    entertainment = create_ledger_entry(
+        user=user,
+        wallet=wallet,
+        amount="100",
+        entry_type=LedgerEntry.EntryType.DEBIT,
+    )
+    entertainment.transaction.category = Category.ENTERTAINMENT
+    entertainment.transaction.save(update_fields=["category"])
+
+    return wallet

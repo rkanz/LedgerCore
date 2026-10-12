@@ -5,6 +5,7 @@ import requests
 from django.db import transaction
 from django.utils import timezone
 
+from apps.ai.services import safe_categorize_transaction
 from apps.exchange.models import ExchangeRate, ExchangeTransaction
 from apps.realtime.realtime import broadcast_exchange_rate, send_notification
 from apps.transactions.cache import invalidate_user_transaction_cache
@@ -104,7 +105,7 @@ def exchange(
     destination_wallet:Wallet,
     amount:Decimal,
     initiated_by,
-
+    description=""
 ):
     if amount <= 0:
         raise ValueError("Exchange amount must be greater than zero.")
@@ -150,6 +151,7 @@ def exchange(
                 currency=source_wallet.currency,
                 idempotency_key=idempotency_key,
                 initiated_by=initiated_by,
+                description=description,
             )
             ExchangeTransaction.objects.create(
                 transaction=new_transaction,
@@ -224,6 +226,9 @@ def exchange(
                     destination_amount,
                     exchange_rate.rate,
                 )
+            )
+            transaction.on_commit(
+                lambda: safe_categorize_transaction(new_transaction.id) # type: ignore
             )
             return new_transaction
     except Exception:

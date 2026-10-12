@@ -138,7 +138,6 @@ class ExchangeTransactionAPIView(APIView):
         serializer.is_valid(raise_exception=True)
         source_currency=serializer.validated_data["source_currency"] # type: ignore
         destination_currency=serializer.validated_data["destination_currency"] # type: ignore
-        amount=serializer.validated_data["amount"] # type: ignore
         source_wallet=get_object_or_404(
             Wallet,
             user=request.user,
@@ -158,6 +157,7 @@ class ExchangeTransactionAPIView(APIView):
                 destination_wallet=destination_wallet,
                 amount=serializer.validated_data["amount"], # type: ignore
                 initiated_by=request.user,
+                description=serializer.validated_data.get("description","") # type: ignore
         )   
         except ValueError as e:
             return Response(

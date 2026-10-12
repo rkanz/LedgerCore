@@ -11,20 +11,20 @@ class WithdrawSerializer(serializers.ModelSerializer):
     
     class Meta:
         model=Transaction
-        fields=['id','currency','amount','status','created_at','completed_at','initiated_by']
+        fields=['id','currency','amount','status','created_at','completed_at','initiated_by',"description"]
         read_only_fields=['id','status','created_at','completed_at','initiated_by']
 
 
 class DepositSerializer(serializers.ModelSerializer):
     class Meta:
         model=Transaction
-        fields=['id','currency','amount','status','created_at','completed_at','initiated_by']
+        fields=['id','currency','amount','status','created_at','completed_at','initiated_by',"description"]
         read_only_fields=['id','status','created_at','completed_at','initiated_by']
 
 class TransferSerializer(serializers.ModelSerializer):
     class Meta:
         model=Transaction
-        fields=['id','currency','amount','destination_wallet','status','created_at','completed_at','initiated_by']
+        fields=['id','currency','amount','destination_wallet','status','created_at','completed_at','initiated_by',"description"]
         read_only_fields=['id','status','created_at','completed_at','initiated_by']
 
 class TagNamesField(serializers.ListField):
@@ -41,7 +41,7 @@ class TransactionHistorySerializer(serializers.ModelSerializer):
     class Meta:
         model=Transaction
         fields=["id","source_wallet","destination_wallet","transaction_type","status","amount","currency",
-                "idempotency_key","created_at","completed_at","initiated_by","exchange_details","tags","category"]
+                "idempotency_key","created_at","completed_at","initiated_by","exchange_details","tags","category","description"]
         read_only_fields = [
      "id",
     "source_wallet",

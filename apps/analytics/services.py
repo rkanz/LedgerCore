@@ -58,7 +58,7 @@ def resolve_date_range(
                 "Both start_date and end_date are required."
             )
         if start_date > end_date :
-            raise ValueError("start_date cant be after end_date .")
+            raise ValueError("start_date cannot be after end_date.")
         tz=timezone.get_current_timezone()
         start_datetime = timezone.make_aware(
             datetime.combine(
@@ -98,7 +98,7 @@ def get_summary(
     result=LedgerEntry.objects.filter(
             wallet=wallet,
             created_at__gte=start_date,
-            created_at__lte=end_date
+            created_at__lt=end_date
     ).aggregate(income=Sum(Case(When(
         entry_type=LedgerEntry.EntryType.CREDIT,
         then="amount"
@@ -233,3 +233,42 @@ def get_balance_history(user,currency,start_date,end_date):
                 }
             )
     return history
+
+def get_financial_summary(
+    wallet,
+    period: str | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+):
+    start_datetime, end_datetime = resolve_date_range(
+        period=period,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    summary=get_summary(
+        wallet=wallet,
+        start_date=start_datetime,
+        end_date=end_datetime,
+    )
+    expenses_by_category=(
+        LedgerEntry.objects.filter(
+            wallet=wallet,
+            entry_type=LedgerEntry.EntryType.DEBIT,
+            created_at__gte=start_datetime,
+            created_at__lt=end_datetime,
+        )
+        .values("transaction__category")
+        .annotate(total=Sum("amount"))
+    )
+    net=summary["income"] - summary["expense"]
+    return{
+        "income": summary["income"],
+        "expense": summary["expense"],
+        "net":net,
+        "expenses_by_category":{
+            item["transaction__category"] : item["total"]
+            for item in expenses_by_category
+        },
+        "start_datetime":start_datetime,
+        "end_datetime":end_datetime
+}        
