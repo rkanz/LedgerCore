@@ -166,6 +166,8 @@ CHANNEL_LAYERS = {
         },
     },
 }
+LOG_DIR = BASE_DIR / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 LOGGING = {
     "version": 1,
@@ -185,7 +187,7 @@ LOGGING = {
         },
         "file": {
             "class": "logging.FileHandler",
-            "filename": BASE_DIR / "logs" / "ledgercore.log",
+            "filename": LOG_DIR / "ledgercore.log",
             "formatter": "standard",
         },
     },

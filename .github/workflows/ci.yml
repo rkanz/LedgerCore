@@ -1,0 +1,65 @@
+name: LedgerCore CI
+
+on:
+  push:
+    branches: [main]
+
+  pull_request:
+    branches: [main]
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+
+      - name: Create CI environment file
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_AI_MODEL: ${{ secrets.CLOUDFLARE_AI_MODEL }}
+        run: |
+          cat > .env <<EOF
+          SECRET_KEY=ci-test-secret-key
+          DEBUG=False
+          ALLOWED_HOSTS=localhost,127.0.0.1
+          DB_NAME=ledgercore_db
+          DB_USER=postgres
+          DB_PASSWORD=ci-test-password
+          DB_HOST=db
+          DB_PORT=5432
+          CLOUDFLARE_ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID}
+          CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN}
+          CLOUDFLARE_AI_MODEL=${CLOUDFLARE_AI_MODEL}
+          EOF
+
+      - name: Start PostgreSQL and Redis
+        run: docker compose up -d db redis
+
+      - name: Wait for PostgreSQL
+        run: |
+          for i in $(seq 1 30); do
+            if docker compose exec -T db pg_isready -U postgres -d ledgercore_db; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose logs db
+          exit 1
+
+      - name: Build web image
+        run: docker compose build web
+
+      - name: Run tests inside Docker
+        run: docker compose run --rm web pytest
+
+      - name: Show logs on failure
+        if: failure()
+        run: docker compose logs db redis web
+
+      - name: Shut down services
+        if: always()
+        run: docker compose down 
