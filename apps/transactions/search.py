@@ -5,7 +5,9 @@ from apps.transactions.search_indexes import TRANSACTION_INDEX
 
 
 def get_elasticsearch_client():
-    return Elasticsearch(settings.ELASTICSEARCH_URL)
+    return Elasticsearch(
+        settings.ELASTICSEARCH_URL,
+        request_timeout=20,)
 
 def get_transaction_document(transaction):
     visible_to_user_ids={
@@ -31,11 +33,15 @@ def get_transaction_document(transaction):
     }
 
 def index_transaction(transaction):
-    es=get_elasticsearch_client()
-    try:
-        document=get_transaction_document(transaction)
+    from apps.transactions.search_indexes import create_transaction_index
 
-        response=es.index(
+    create_transaction_index()
+
+    es = get_elasticsearch_client()
+    try:
+        document = get_transaction_document(transaction)
+
+        response = es.index(
             index=TRANSACTION_INDEX,
             id=transaction.id,
             document=document,
@@ -43,7 +49,6 @@ def index_transaction(transaction):
         return response["result"]
     finally:
         es.close()
-
 def search_transactions(query:str,user_id:int,size:int = 1000)->list[int]:
     if not query.strip():
         return []

@@ -12,7 +12,7 @@ from apps.transactions.search import (
     get_elasticsearch_client,
     index_transaction,
 )
-from apps.transactions.search_indexes import TRANSACTION_INDEX
+from apps.transactions.search_indexes import TRANSACTION_INDEX,create_transaction_index
 from apps.wallets.models import Wallet
 
 
@@ -173,6 +173,7 @@ def mina_wallets(mina):
 
 @pytest.fixture
 def index_transactions(request):
+    create_transaction_index()
     indexed_ids = []
 
     def _index(*transactions):

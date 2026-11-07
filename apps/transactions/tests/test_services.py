@@ -935,3 +935,5 @@ def test_deposit_concurrent_idempotency(wallets,user):
     transaction=transaction1,
     entry_type=LedgerEntry.EntryType.CREDIT,
     ).count() == 1
+
+

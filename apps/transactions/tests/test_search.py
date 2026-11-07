@@ -46,27 +46,36 @@ def test_get_transaction_document(ali,ali_wallets,wallets,create_transfer):
 
 
 @pytest.mark.django_db
-def test_get_index_transaction(ali,ali_wallets,wallets,create_transfer):
-    source_wallet=ali_wallets[Wallet.Currency.USDT]
-    destination_wallet=wallets[Wallet.Currency.USDT]
-    transaction=create_transfer(
+def test_get_index_transaction(ali, ali_wallets, wallets, create_transfer):
+    with patch(
+        "apps.transactions.search_indexes.create_transaction_index",
+    ), patch(
+        "apps.transactions.search.get_elasticsearch_client",
+    ) as mock_client:
+
+        source_wallet = ali_wallets[Wallet.Currency.USDT]
+        destination_wallet = wallets[Wallet.Currency.USDT]
+
+        transaction = create_transfer(
             initiated_by=ali,
             source_wallet=source_wallet,
             destination_wallet=destination_wallet,
-            amount="50"
-    )
-    transaction.description = "Grocery shopping"
-    transaction.category = "FOOD"
-    transaction.save(update_fields=["description", "category"])
-    grocery_tag = Tag.objects.create(name="grocery")
-    food_tag = Tag.objects.create(name="food")
-    transaction.tags.add(grocery_tag, food_tag)
-    with patch(
-        "apps.transactions.search.get_elasticsearch_client",
-    )as mock_client:
-        mock_es=mock_client.return_value
-        mock_es.index.return_value = {"result":"created"}
+            amount="50",
+        )
+
+        transaction.description = "Grocery shopping"
+        transaction.category = "FOOD"
+        transaction.save(update_fields=["description", "category"])
+
+        grocery_tag = Tag.objects.create(name="grocery")
+        food_tag = Tag.objects.create(name="food")
+        transaction.tags.add(grocery_tag, food_tag)
+
+        mock_es = mock_client.return_value
+        mock_es.index.return_value = {"result": "created"}
+
         result = index_transaction(transaction)
+
         mock_es.index.assert_called_once_with(
             index="ledgercore_transactions",
             id=transaction.id,
@@ -218,3 +227,41 @@ def test_search_transactions(user,wallets,wallets_2,create_transfer):
     )
     assert transaction.id in description_results
     assert transaction.id in tag_results
+
+@pytest.mark.django_db
+def test_index_transaction_creates_index(user,wallets,wallets_2,create_transfer):
+    source_wallet=wallets[Wallet.Currency.USDT]
+    destination_wallet=wallets_2[Wallet.Currency.USDT]
+    transaction=create_transfer(
+        initiated_by=user,
+        source_wallet=source_wallet,
+        destination_wallet=destination_wallet,
+        amount="50"
+    )
+    from apps.transactions.search import (
+        get_elasticsearch_client,
+        index_transaction,
+    )
+    from apps.transactions.search_indexes import TRANSACTION_INDEX
+
+    es = get_elasticsearch_client()
+    try:
+        es.indices.delete(
+            index=TRANSACTION_INDEX,
+            ignore_unavailable=True,
+        )
+    finally:
+        es.close()
+
+    index_transaction(transaction)
+
+    es = get_elasticsearch_client()
+    try:
+        assert es.indices.exists(index=TRANSACTION_INDEX)
+
+        mapping = es.indices.get_mapping(index=TRANSACTION_INDEX)
+        properties = mapping[TRANSACTION_INDEX]["mappings"]["properties"]
+
+        assert properties["tags"]["analyzer"] == "transaction_index_analyzer"
+    finally:
+        es.close()
