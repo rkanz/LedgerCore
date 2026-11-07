@@ -918,6 +918,49 @@ def test_transaction_history_search_tags(
     payment_tag = Tag.objects.create(name="payment")
     transaction.tags.add(payment_tag)
     index_transactions(transaction)
+    from apps.transactions.search import get_elasticsearch_client
+    from apps.transactions.search_indexes import TRANSACTION_INDEX
+
+    es = get_elasticsearch_client()
+
+    try:
+        print("\n--- ELASTICSEARCH DIAGNOSTICS ---")
+
+        print(
+            "MAPPING:",
+            es.indices.get_mapping(index=TRANSACTION_INDEX),
+        )
+
+        print(
+            "SETTINGS:",
+            es.indices.get_settings(index=TRANSACTION_INDEX),
+        )
+
+        print(
+            "INDEX ANALYZER:",
+            es.indices.analyze(
+                index=TRANSACTION_INDEX,
+                analyzer="transaction_index_analyzer",
+                text="payment",
+            ),
+        )
+
+        print(
+            "SEARCH ANALYZER:",
+            es.indices.analyze(
+                index=TRANSACTION_INDEX,
+                analyzer="transaction_search_analyzer",
+                text="paym",
+            ),
+        )
+
+        print(
+            "INDEXED DOCUMENT:",
+            es.get(index=TRANSACTION_INDEX, id=transaction.id),
+        )
+
+    finally:
+        es.close()
     from apps.transactions.search import search_transactions
 
     matched_ids = search_transactions("paym", user.id)
@@ -926,12 +969,19 @@ def test_transaction_history_search_tags(
         "transaction_id": transaction.id,
         "matched_ids": matched_ids,
     }
-    response=api_client.get(reverse("transactions:transaction-history"),{
-        "search":"paym"
-    })
+
+    response = api_client.get(
+        reverse("transactions:transaction-history"),
+        {"search": "paym"},
+    )
     assert response.status_code == 200
-    results=response.data["results"]
-    assert len(results) == 1
+
+    results = response.data["results"]
+
+    assert len(results) == 1, {
+        "matched_ids": matched_ids,
+        "response": response.data,
+    }
     assert results[0]["id"] == transaction.id
 
 @pytest.mark.django_db
