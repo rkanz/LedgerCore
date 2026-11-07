@@ -64,12 +64,23 @@ jobs:
 
           docker compose logs elasticsearch
           exit 1
+      - name: Wait for Redis
+        run: |
+          for i in $(seq 1 30); do
+            if docker compose exec -T redis redis-cli ping | grep -q PONG; then
+              echo "Redis is ready"
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose logs redis
+          exit 1
 
       - name: Build web image
         run: docker compose build web
 
       - name: Run tests inside Docker
-        run: docker compose run --rm web pytest
+        run: docker compose run --rm web pytest -v -s -p no:cacheprovider
 
       - name: Show logs on failure
         if: failure()
