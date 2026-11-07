@@ -201,6 +201,13 @@ def test_search_transactions(user,wallets,wallets_2,create_transfer):
         es.close()
 
     assert index_transaction(transaction) == "created"
+
+    es = get_elasticsearch_client()
+    try:
+        es.indices.refresh(index=TRANSACTION_INDEX)
+    finally:
+        es.close()
+
     description_results = search_transactions(
         query="Grocery",
         user_id=user.id

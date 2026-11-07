@@ -2,6 +2,7 @@ import uuid
 from decimal import Decimal
 
 import pytest
+from django.core.cache import cache
 from rest_framework.test import APIClient
 
 from apps.accounts.services import register_user
@@ -198,3 +199,9 @@ def index_transactions(request):
         es.indices.refresh(index=TRANSACTION_INDEX)
     finally:
         es.close()
+
+@pytest.fixture(autouse=True)
+def clear_cache():
+    cache.clear()
+    yield
+    cache.clear()

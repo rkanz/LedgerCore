@@ -7,7 +7,6 @@ from rest_framework.test import APIClient
 
 from apps.exchange.services import exchange
 from apps.transactions.models import Tag, Transaction
-from apps.transactions.search import index_transaction
 from apps.transactions.services import deposit, withdraw
 from apps.wallets.models import Wallet
 
@@ -907,6 +906,9 @@ def test_transaction_history_search_tags(
     create_transfer,
     index_transactions,
 ):
+    from django.core.cache import cache
+
+    cache.clear()
     transaction=create_transfer(
         initiated_by=user,
         source_wallet=wallets[Wallet.Currency.USDT],
