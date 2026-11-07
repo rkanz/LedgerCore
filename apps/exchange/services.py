@@ -2,14 +2,15 @@ import logging
 from decimal import Decimal, InvalidOperation
 
 import requests
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from apps.ai.services import safe_categorize_transaction
 from apps.exchange.models import ExchangeRate, ExchangeTransaction
 from apps.realtime.realtime import broadcast_exchange_rate, send_notification
+from apps.transactions.audit import record_audit_event
 from apps.transactions.cache import invalidate_user_transaction_cache
-from apps.transactions.models import LedgerEntry, Transaction
+from apps.transactions.models import AuditLog, LedgerEntry, Transaction
 from apps.wallets.cache import invalidate_user_wallet_cache
 from apps.wallets.models import Wallet
 
@@ -20,7 +21,7 @@ FRANKFURTER_BASE_URL="https://api.frankfurter.dev/v2"
 
 logger = logging.getLogger(__name__)
 
-class ExchangeRateErrror(Exception):
+class ExchangeRateError(Exception):
     pass
 
 
@@ -37,21 +38,21 @@ def get_exchange_rate(*,base_currency:str,quote_currency:str)-> Decimal:
     )
 
     try:
-        response=requests.get(url,timeout=5)
+        response=requests.get(url,timeout=(5,15))
         response.raise_for_status()
     except requests.RequestException as exc:
-        raise ExchangeRateErrror(
+        raise ExchangeRateError(
             "Failed to fetch exchange rate ."
         ) from exc
     data = response.json()
     try:
         rate = Decimal(str(data["rate"]))    # pyright: ignore[reportIndexIssue]
     except (KeyError,InvalidOperation) as exc:
-        raise ExchangeRateErrror(
+        raise ExchangeRateError(
             "Invalid exchange rate response."
         ) from exc
     if rate <= 0:
-        raise ExchangeRateErrror(
+        raise ExchangeRateError(
             "Exchange rate must be greater than zero ."
         )
     return rate
@@ -130,8 +131,14 @@ def exchange(
             else:
                 destination_wallet = first_wallet
                 source_wallet = second_wallet
+            existing_transaction = Transaction.objects.filter(
+                idempotency_key=idempotency_key
+            ).first()
+
+            if existing_transaction:
+                return existing_transaction
             if amount > source_wallet.balance:
-                raise ValueError("Insufficent wallet balance.")
+                raise ValueError("Insufficient wallet balance.")
             exchange_rate=ExchangeRate.objects.filter(
                 base_currency=source_wallet.currency,
                 quote_currency=destination_wallet.currency
@@ -142,17 +149,38 @@ def exchange(
             fee_amount = calculate_exchange_fee(
             converted_amount=converted_amount)
             destination_amount = converted_amount - fee_amount
-            new_transaction=Transaction.objects.create(
-                source_wallet=source_wallet,
-                destination_wallet=destination_wallet,
-                transaction_type=Transaction.TransactionType.EXCHANGE,
-                status=Transaction.TransactionStatus.PENDING,
-                amount=amount,
-                currency=source_wallet.currency,
-                idempotency_key=idempotency_key,
-                initiated_by=initiated_by,
-                description=description,
-            )
+            try:
+                with transaction.atomic():
+                    new_transaction = Transaction.objects.create(
+                        source_wallet=source_wallet,
+                        destination_wallet=destination_wallet,
+                        transaction_type=Transaction.TransactionType.EXCHANGE,
+                        status=Transaction.TransactionStatus.PENDING,
+                        amount=amount,
+                        currency=source_wallet.currency,
+                        idempotency_key=idempotency_key,
+                        initiated_by=initiated_by,
+                        description=description,
+                    )
+
+            except IntegrityError as exc:
+                constraint_name = getattr(
+                    getattr(exc.__cause__, "diag", None),
+                    "constraint_name",
+                    None,
+                )
+
+                if constraint_name != "transactions_transaction_idempotency_key_key":
+                    raise
+
+                existing_transaction = Transaction.objects.filter(
+                    idempotency_key=idempotency_key
+                ).first()
+
+                if existing_transaction is None:
+                    raise
+
+                return existing_transaction
             ExchangeTransaction.objects.create(
                 transaction=new_transaction,
                 exchange_rate=exchange_rate,
@@ -180,6 +208,23 @@ def exchange(
             new_transaction.status = Transaction.TransactionStatus.COMPLETED
             new_transaction.completed_at = timezone.now()
             new_transaction.save(update_fields=["status", "completed_at"])
+            record_audit_event(
+                actor=initiated_by,
+                action=AuditLog.Action.EXCHANGE,
+                transaction=new_transaction,
+                details={
+                    "source_wallet_id":source_wallet.pk,
+                    "destination_wallet_id":destination_wallet.pk,
+                    "source_amount":str(amount),
+                    "exchange_rate":str(exchange_rate.rate),
+                    "fee_amount":str(fee_amount),
+                    "fee_currency":destination_wallet.currency,
+                    "destination_amount":str(destination_amount),
+                    "base_currency":source_wallet.currency,
+                    "quote_currency":destination_wallet.currency,
+                    "status":new_transaction.status,
+                }
+            )
             transaction.on_commit(
                 lambda:invalidate_user_wallet_cache(
                     user_id=initiated_by.id,
@@ -231,16 +276,19 @@ def exchange(
                 lambda: safe_categorize_transaction(new_transaction.id) # type: ignore
             )
             return new_transaction
+    except ValueError:
+        raise
+
     except Exception:
         logger.exception(
             "Unexpected error during exchange: "
             "source_wallet_id=%s source_currency=%s "
             "destination_wallet_id=%s destination_currency=%s "
             "amount=%s",
-            source_wallet.id, #type: ignore
+            source_wallet.id, # type: ignore
             source_wallet.currency,
-            destination_wallet.id, #type: ignore
+            destination_wallet.id,  # type: ignore
             destination_wallet.currency,
             amount,
-            )
+        )
         raise

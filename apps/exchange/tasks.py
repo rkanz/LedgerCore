@@ -9,8 +9,10 @@ logger = logging.getLogger(__name__)
 @shared_task(
     bind=True,
     autoretry_for=(Exception,),
-    retry_backoff=True,
-    max_retries=3,
+    retry_backoff=5,
+    retry_backoff_max=60,
+    retry_jitter=True,
+    max_retries=5,
 )
 def update_exchange_rate(
     self,base_currency:str,quote_currency:str

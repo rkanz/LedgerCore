@@ -7,6 +7,7 @@ from rest_framework.test import APIClient
 
 from apps.exchange.services import exchange
 from apps.transactions.models import Tag, Transaction
+from apps.transactions.search import index_transaction
 from apps.transactions.services import deposit, withdraw
 from apps.wallets.models import Wallet
 
@@ -715,3 +716,401 @@ def test_recent_recipients_view_requires_currency(api_client):
 
     assert response.status_code == 400
     assert response.data["detail"] == "currency is required."
+
+
+@pytest.mark.django_db
+def test_transfer_rate_limit(user,wallets,wallets_2,settings):
+    settings.REST_FRAMEWORK = {
+        **settings.REST_FRAMEWORK,
+        "DEFAULT_THROTTLE_RATES": {
+            **settings.REST_FRAMEWORK.get("DEFAULT_THROTTLE_RATES", {}),
+            "financial_operation": "5/minute",
+        },
+    }
+    from django.core.cache import cache
+    cache.delete(f"throttle_financial_operation_{user.pk}")
+    client=APIClient()
+    client.force_authenticate(user=user)
+    source_wallet=wallets[Wallet.Currency.USDT]
+    destination_wallet=wallets_2[Wallet.Currency.USDT]
+    source_wallet.balance = Decimal("1000")
+    source_wallet.save(update_fields=["balance"])
+    for _ in range(5):
+        response=client.post(reverse("transactions:transfer"),{
+            "destination_wallet":destination_wallet.id,
+            "currency":"USDT",
+            "amount":Decimal("1"),
+        },HTTP_IDEMPOTENCY_KEY=str(uuid.uuid4()))
+        assert response.status_code == 201 # type: ignore
+    response=client.post(reverse("transactions:transfer"),{
+            "destination_wallet":destination_wallet.id,
+            "currency":"USDT",
+            "amount":Decimal("1"),
+    },HTTP_IDEMPOTENCY_KEY=str(uuid.uuid4()))
+    assert response.status_code == 429 # type: ignore
+
+@pytest.mark.django_db
+def test_withdraw_rate_limit(user,wallets,settings):
+    settings.REST_FRAMEWORK = {
+        **settings.REST_FRAMEWORK,
+        "DEFAULT_THROTTLE_RATES": {
+            **settings.REST_FRAMEWORK.get("DEFAULT_THROTTLE_RATES", {}),
+            "financial_operation": "5/minute",
+        },
+    }
+    from django.core.cache import cache
+    cache.delete(f"throttle_financial_operation_{user.pk}")
+    client=APIClient()
+    client.force_authenticate(user=user)
+    wallet=wallets[Wallet.Currency.USDT]
+    wallet.balance=Decimal("1000")
+    wallet.save(update_fields=["balance"])
+    for _ in range(5):
+        response=client.post(reverse("transactions:withdraw"),{
+            "amount":Decimal("100"),
+            "currency":"USDT",
+        },HTTP_IDEMPOTENCY_KEY=str(uuid.uuid4()))
+        assert response.status_code == 201 # type: ignore
+    response=client.post(reverse("transactions:withdraw"),{
+            "amount":Decimal("100"),
+            "currency":"USDT",
+    },HTTP_IDEMPOTENCY_KEY=str(uuid.uuid4()))
+    assert response.status_code == 429   # type: ignore
+
+@pytest.mark.django_db
+def test_deposit_rate_limit(wallets,user,settings):
+    settings.REST_FRAMEWORK = {
+        **settings.REST_FRAMEWORK,
+        "DEFAULT_THROTTLE_RATES": {
+            **settings.REST_FRAMEWORK.get("DEFAULT_THROTTLE_RATES", {}),
+            "financial_operation": "5/minute",
+        },
+    }
+    from django.core.cache import cache
+    cache.delete(f"throttle_financial_operation_{user.pk}")
+    client=APIClient()
+    client.force_authenticate(user=user)
+    for _ in range(5):
+        response=client.post(reverse("transactions:deposit"),{
+            "amount":Decimal("100"),
+            "currency":"USDT",
+        },HTTP_IDEMPOTENCY_KEY=str(uuid.uuid4()))
+        assert response.status_code == 201 # type: ignore
+    response=client.post(reverse("transactions:deposit"),{
+            "amount":Decimal("100"),
+            "currency":"USDT",
+    },HTTP_IDEMPOTENCY_KEY=str(uuid.uuid4()))
+    assert response.status_code == 429     # type: ignore
+
+@pytest.mark.django_db
+def test_transaction_history_search_description(
+    api_client,
+    user,
+    wallets,
+    create_transfer,
+    index_transactions,
+    wallets_2,
+):
+    grocery=create_transfer(
+        amount="50",
+        source_wallet=wallets[Wallet.Currency.USDT],
+        destination_wallet=wallets_2[Wallet.Currency.USDT],
+        initiated_by=user,
+    )
+    grocery.description = "Grocery shopping"
+    grocery.save(update_fields=["description"])
+    taxi=create_transfer(
+        initiated_by=user,
+        amount="100",
+        source_wallet=wallets[Wallet.Currency.USDT],
+        destination_wallet=wallets_2[Wallet.Currency.USDT],
+    )
+    taxi.description = "Taxi ride"
+    taxi.save(update_fields=["description"])
+    index_transactions(grocery, taxi)
+    response=api_client.get(reverse("transactions:transaction-history"),{
+        "search":"Grocery"
+    })
+    assert response.status_code == 200
+    results = response.data["results"]
+    assert len(results) == 1
+    assert results[0]["id"] == grocery.id
+
+@pytest.mark.django_db
+def test_transaction_history_search_no_results(
+    api_client,
+    user,
+    wallets,
+    create_transfer,
+    index_transactions,
+    wallets_2,
+):
+    transaction=create_transfer(
+        initiated_by=user,
+        source_wallet=wallets[Wallet.Currency.USDT],
+        destination_wallet=wallets_2[Wallet.Currency.USDT],
+        amount="50"
+    )
+    transaction.description="Grocery shopping"
+    transaction.save(update_fields=["description"])
+    index_transactions(transaction)
+    response=api_client.get(reverse("transactions:transaction-history"),{
+        "search":"nonexistent"
+    })
+    assert response.status_code == 200
+    assert response.data["results"] == []
+
+@pytest.mark.django_db
+def test_transaction_history_search_does_not_return_other_users_transactions(
+    api_client,
+    user,
+    user_2,
+    user_3,
+    wallets,
+    wallets_2,
+    wallets_3,
+    create_transfer,
+    index_transactions,
+):
+    alice_transaction=create_transfer(
+        source_wallet=wallets[Wallet.Currency.USDT],
+        destination_wallet=wallets_2[Wallet.Currency.USDT],
+        amount="50",
+        initiated_by=user,
+    )
+    alice_transaction.description = "Grocery shopping"
+    alice_transaction.save(update_fields=["description"])
+
+    charlie_transaction=create_transfer(
+        source_wallet=wallets_3[Wallet.Currency.USDT],
+        destination_wallet=wallets_2[Wallet.Currency.USDT],
+        amount="100",
+        initiated_by=user_3,
+    )
+    charlie_transaction.description = "Grocery shopping"
+    charlie_transaction.save(update_fields=["description"])
+    index_transactions(charlie_transaction,alice_transaction)
+    response=api_client.get(reverse("transactions:transaction-history"),{
+        "search":"Grocery"
+    })
+    assert response.status_code == 200
+    results= response.data["results"]
+    assert len(results) == 1
+    assert results[0]["id"] == alice_transaction.id
+
+@pytest.mark.django_db
+def test_transaction_history_search_tags(
+    api_client,
+    user,
+    wallets,
+    wallets_2,
+    create_transfer,
+    index_transactions,
+):
+    transaction=create_transfer(
+        initiated_by=user,
+        source_wallet=wallets[Wallet.Currency.USDT],
+        destination_wallet=wallets_2[Wallet.Currency.USDT],
+        amount="100",
+    )
+    payment_tag = Tag.objects.create(name="payment")
+    transaction.tags.add(payment_tag)
+    index_transactions(transaction)
+    response=api_client.get(reverse("transactions:transaction-history"),{
+        "search":"paym"
+    })
+    assert response.status_code == 200
+    results=response.data["results"]
+    assert len(results) == 1
+    assert results[0]["id"] == transaction.id
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "search",
+    [None, "", "   "],
+)
+def test_transaction_history_empty_search(
+    api_client,
+    user,
+    wallets,
+    wallets_2,
+    create_transfer,
+    search,
+):
+    transaction=create_transfer(
+        initiated_by=user,
+        source_wallet=wallets[Wallet.Currency.USDT],
+        destination_wallet=wallets_2[Wallet.Currency.USDT],
+        amount="50"
+    )
+    params = {}
+    if search is not None:
+        params["search"] = search
+
+    response=api_client.get(reverse("transactions:transaction-history"),params)
+
+    assert response.status_code == 200
+    assert len(response.data["results"]) == 1
+    assert response.data["results"][0]["id"] == transaction.id
+
+
+@pytest.mark.django_db
+def test_transaction_history_search_with_filters(
+    api_client,
+    user,
+    wallets,
+    wallets_2,
+    create_transfer,
+    index_transactions,
+):
+    completed_transfer = create_transfer(
+        initiated_by=user,
+        source_wallet=wallets[Wallet.Currency.USDT],
+        destination_wallet=wallets_2[Wallet.Currency.USDT],
+        status=Transaction.TransactionStatus.COMPLETED,
+    )
+    completed_transfer.description = "Grocery payment"
+    completed_transfer.save(update_fields=["description"])
+
+    pending_transfer = create_transfer(
+        initiated_by=user,
+        source_wallet=wallets[Wallet.Currency.USDT],
+        destination_wallet=wallets_2[Wallet.Currency.USDT],
+        status=Transaction.TransactionStatus.PENDING,
+    )
+    pending_transfer.description = "Grocery payment"
+    pending_transfer.save(update_fields=["description"])
+    deposit_transaction=deposit(
+            wallet=wallets[Wallet.Currency.USDT],
+            amount=Decimal("220"),
+            initiated_by=user,
+            idempotency_key=uuid.uuid4()
+            )
+    deposit_transaction.description = "Grocery payment"
+    deposit_transaction.save(update_fields=["description"])
+
+    index_transactions(
+        completed_transfer,
+        pending_transfer,
+        deposit_transaction,
+    )
+
+    response = api_client.get(
+        reverse("transactions:transaction-history"),
+        {
+            "search": "grocery",
+            "status": Transaction.TransactionStatus.COMPLETED,
+            "transaction_type": Transaction.TransactionType.TRANSFER,
+        },
+    )
+
+    assert response.status_code == 200
+
+    results = response.data["results"]
+
+    assert len(results) == 1
+    assert results[0]["id"] == completed_transfer.id
+    response2=api_client.get(reverse("transactions:transaction-history"),{
+        "search":"grocery",
+        "transaction_type": Transaction.TransactionType.DEPOSIT,
+    })
+    assert response2.status_code == 200
+    results2 = response2.data["results"]
+    assert len(results2) == 1
+    assert results2[0]["id"] == deposit_transaction.id # type: ignore
+
+@pytest.mark.django_db
+def test_transaction_history_search_pagination(
+    api_client,
+    user,
+    wallets,
+    wallets_2,
+    create_transfer,
+    index_transactions,
+):
+    transactions = []
+    for _ in range(12):
+        transaction=create_transfer(
+            initiated_by=user,
+            source_wallet=wallets[Wallet.Currency.USDT],
+            destination_wallet=wallets_2[Wallet.Currency.USDT]
+        )
+        transaction.description="Grocery payment"
+        transaction.save(update_fields=["description"])
+        transactions.append(transaction)
+    index_transactions(*transactions)
+    response_page_1=api_client.get(reverse("transactions:transaction-history"),{
+        "search":"grocery",
+        "page":1
+    })
+    response_page_2=api_client.get(reverse("transactions:transaction-history"),{
+        "search":"grocery",
+        "page":2
+    })
+    assert response_page_1.status_code == 200
+    assert response_page_2.status_code == 200
+
+    results_page_1=response_page_1.data["results"]
+    results_page_2=response_page_2.data["results"]
+    assert len(results_page_1) == 10
+    assert len(results_page_2) == 2
+    assert response_page_1.data["count"] == 12
+    assert response_page_2.data["count"] == 12
+    ids_page_1 = {item["id"] for item in results_page_1}
+    ids_page_2 = {item["id"] for item in results_page_2}
+
+    assert ids_page_1.isdisjoint(ids_page_2)
+
+@pytest.mark.django_db
+def test_transaction_history_search_multiple_words(
+    api_client,
+    user,
+    wallets,
+    wallets_2,
+    create_transfer,
+    index_transactions,
+):
+    transaction_1 = create_transfer(
+        initiated_by=user,
+        source_wallet=wallets[Wallet.Currency.USDT],
+        destination_wallet=wallets_2[Wallet.Currency.USDT],
+    )
+    transaction_1.description = "Monthly grocery payment"
+    transaction_1.save(update_fields=["description"])
+
+    transaction_2 = create_transfer(
+        initiated_by=user,
+        source_wallet=wallets[Wallet.Currency.USDT],
+        destination_wallet=wallets_2[Wallet.Currency.USDT],
+    )
+    transaction_2.description = "Monthly salary payment"
+    transaction_2.save(update_fields=["description"])
+
+    transaction_3 = create_transfer(
+        initiated_by=user,
+        source_wallet=wallets[Wallet.Currency.USDT],
+        destination_wallet=wallets_2[Wallet.Currency.USDT],
+    )
+    transaction_3.description = "Grocery shopping"
+    transaction_3.save(update_fields=["description"])
+
+    index_transactions(
+        transaction_1,
+        transaction_2,
+        transaction_3,
+    )
+
+    response=api_client.get(reverse("transactions:transaction-history"),{
+        "search":"grocery payment"
+    })
+    assert response.status_code == 200
+
+    results = response.data["results"]
+    result_ids = {item["id"] for item in results}
+
+    assert len(results) == 3
+    assert result_ids == {
+        transaction_1.id,
+        transaction_2.id,
+        transaction_3.id
+    }

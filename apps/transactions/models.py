@@ -72,3 +72,34 @@ class LedgerEntry(models.Model):
     entry_type=models.CharField(max_length=6,choices=EntryType.choices)
     wallet=models.ForeignKey(Wallet,on_delete=models.PROTECT,related_name="ledger_entries")
 
+class AuditLog(models.Model):
+    class Action(models.TextChoices):
+        DEPOSIT = "DEPOSIT", "Deposit"
+        WITHDRAW = "WITHDRAW", "Withdraw"
+        TRANSFER = "TRANSFER", "Transfer"
+        EXCHANGE = "EXCHANGE", "Exchange"
+    actor=models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="audit_logs"
+    )
+    action=models.CharField(max_length=20,choices=Action.choices)
+    created_at=models.DateTimeField(auto_now_add=True)
+    transaction=models.ForeignKey(
+        Transaction,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="audit_logs",
+    )
+    details=models.JSONField(default=dict,blank=True)
+    class Meta:
+        ordering=["-created_at"]
+        indexes=[
+            models.Index(fields=["action","created_at"]),
+            models.Index(fields=["actor","created_at"])
+        ]
+    def __str__(self):
+        return f"{self.action} - {self.created_at}"

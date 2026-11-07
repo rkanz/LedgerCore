@@ -96,21 +96,21 @@ def test_wallet_detail_uses_cache(user,wallets):
     client=APIClient()
     client.force_authenticate(user=user)
     wallet=wallets[Wallet.Currency.USDT]
-    with patch(
-        "apps.wallets.views.cache.get",
-        return_value=None,
-    ) as cache_get, patch(
-        "apps.wallets.views.cache.set",
-    ) as cache_set:
-        response=client.get(reverse('wallet-detail',kwargs={
-             'pk':wallet.id
-        }))
+    with patch("apps.wallets.views.cache") as wallet_cache:
+        wallet_cache.get.return_value = None
+        response = client.get(
+            reverse(
+                "wallet-detail",
+                kwargs={"pk": wallet.id},
+            )
+        )
+        wallet_cache.get.assert_called_once_with(
+            wallet_detail_cache_key(user.id, wallet.id)
+        )
         assert response.status_code == 200 # pyright: ignore[reportAttributeAccessIssue]
-        cache_get.assert_called_once_with(
-        wallet_detail_cache_key(user.id, wallet.id)
-    )
-
-        cache_set.assert_called_once()
-        assert cache_set.call_args.args[1] == response.data # pyright: ignore[reportAttributeAccessIssue]
+        wallet_cache.set.assert_called_once()
+        assert (
+            wallet_cache.set.call_args.args[1] == response.data # pyright: ignore[reportAttributeAccessIssue]
+        )
 
          

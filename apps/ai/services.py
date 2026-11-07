@@ -3,7 +3,6 @@ import logging
 
 from apps.ai.client import CloudflareAIClient
 from apps.ai.schemas import FinancialSummaryOutput, TransactionCategoryOutput
-from apps.analytics.services import get_financial_summary
 from apps.transactions.models import Tag, Transaction
 
 logger = logging.getLogger(__name__)

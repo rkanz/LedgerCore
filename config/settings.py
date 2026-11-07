@@ -134,8 +134,21 @@ REST_FRAMEWORK = {
         "rest_framework_simplejwt.authentication.JWTAuthentication",
     ),
     "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.IsAuthenticated",),
+
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+
+    "DEFAULT_THROTTLE_CLASSES": [
+        "rest_framework.throttling.UserRateThrottle",
+        "rest_framework.throttling.AnonRateThrottle",
+    ],
+    "DEFAULT_THROTTLE_RATES": {
+        "user": "100/minute",
+        "anon": "20/minute",
+        "financial_operation": "5/minute",
+    },
 }
+
+
 SPECTACULAR_SETTINGS = {
     "TITLE": "LedgerCore API",
     "DESCRIPTION": "Digital wallet and transaction management API",
@@ -203,3 +216,5 @@ LOGGING = {
 CLOUDFLARE_ACCOUNT_ID = env("CLOUDFLARE_ACCOUNT_ID")
 CLOUDFLARE_API_TOKEN = env("CLOUDFLARE_API_TOKEN")
 CLOUDFLARE_AI_MODEL = env("CLOUDFLARE_AI_MODEL")
+
+ELASTICSEARCH_URL = "http://elasticsearch:9200"

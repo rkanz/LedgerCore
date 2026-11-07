@@ -13,12 +13,14 @@ from drf_spectacular.utils import (
     extend_schema,
 )
 from rest_framework import generics, status
-from rest_framework.filters import OrderingFilter, SearchFilter
+from rest_framework.filters import OrderingFilter
 from rest_framework.pagination import PageNumberPagination
+from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.transactions.models import Transaction
+from apps.transactions.search import search_transactions
 from apps.wallets.models import Wallet
 
 from .cache import (
@@ -41,6 +43,7 @@ from .services import (
     transfer,
     withdraw,
 )
+from .throttles import FinancialOperationThrottle
 
 
 @extend_schema(
@@ -84,6 +87,7 @@ from .services import (
     ]
 )
 class WithdrawAPIView(APIView):
+    throttle_classes=[FinancialOperationThrottle]
     def post(self,request):
         serializer=WithdrawSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -167,6 +171,7 @@ withdraw_view=WithdrawAPIView.as_view()
     ]
 )
 class DepositAPIView(APIView):
+    throttle_classes=[FinancialOperationThrottle]
     def post(self,request):
        
         serializer=DepositSerializer(data=request.data)
@@ -256,6 +261,7 @@ deposit_view=DepositAPIView.as_view()
     ]
 )
 class TransferAPIView(APIView):
+    throttle_classes=[FinancialOperationThrottle]
     def post(self,request):
         serializer=TransferSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -376,32 +382,43 @@ class TransactionFilter(django_filters.FilterSet):
     ],
 )
 class TransactionHistoryAPIView(generics.ListAPIView):
+    request: Request
     serializer_class=TransactionHistorySerializer
     pagination_class=TransactionPagination
-    filter_backends = [DjangoFilterBackend,OrderingFilter,SearchFilter]
-    search_fields = ["tags__name",]
+    filter_backends = [DjangoFilterBackend,OrderingFilter]
     filterset_class=TransactionFilter
     ordering_fields=['amount','completed_at',"created_at"]
     def get_queryset(self):
         if getattr(self, "swagger_fake_view", False):
             return Transaction.objects.none()
-        return Transaction.objects.filter(
+        queryset= Transaction.objects.filter(
             Q(initiated_by=self.request.user)
             |Q(source_wallet__user=self.request.user)
             |Q(destination_wallet__user=self.request.user)
-          ).select_related(
+          )
+        search_query = self.request.query_params.get("search")
+        if search_query and search_query.strip():
+            transaction_ids=search_transactions(
+                query=search_query,
+                user_id=self.request.user.id,
+             )
+            queryset=queryset.filter(pk__in=transaction_ids)
+        return queryset.select_related(
             "source_wallet",
             "destination_wallet",
             "initiated_by",
             "exchange_details",
             "exchange_details__exchange_rate",
-        ).prefetch_related("tags",).distinct().order_by("-created_at")
+        ).prefetch_related(
+            "tags",
+        ).distinct().order_by("-created_at","-id")
     def list(self,request,*args,**kwargs):
         cache_key=transaction_history_cache_key(request.user.id,request.get_full_path())
         cached_data=cache.get(cache_key)
         if cached_data is not None:
             return Response(cached_data)
-        queryset=self.filter_queryset(self.get_queryset())
+        queryset = self.get_queryset()
+        queryset = self.filter_queryset(queryset)
         page=self.paginate_queryset(queryset)
         if page is not None:
             serializer=self.get_serializer(page,many=True)

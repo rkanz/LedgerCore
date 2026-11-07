@@ -1,11 +1,15 @@
-from datetime import timedelta
 import uuid
+from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
 from decimal import Decimal
+from threading import Barrier
+from unittest.mock import patch
 
-from django.utils import timezone
 import pytest
+from django.db import close_old_connections
+from django.utils import timezone
 
-from apps.transactions.models import LedgerEntry, Transaction
+from apps.transactions.models import AuditLog, LedgerEntry, Transaction
 from apps.transactions.services import (
     deposit,
     get_frequent_recipients,
@@ -30,10 +34,10 @@ def test_desposit(user,wallets):
     assert transaction.status == Transaction.TransactionStatus.COMPLETED
 
 @pytest.mark.django_db
-def test_withdraw_insufficent_balance(user,wallets):
+def test_withdraw_insufficient_balance(user,wallets):
 
     wallet=wallets[Wallet.Currency.USDT]
-    with pytest.raises(ValueError,match="Insufficent wallet balance."):
+    with pytest.raises(ValueError,match="Insufficient wallet balance."):
         withdraw(
         wallet=wallet,
         amount=Decimal("50"),
@@ -99,6 +103,9 @@ def test_withdraw_idempotency(user,wallets):
     assert Transaction.objects.filter(
         idempotency_key=idempotency_key
     ).count() == 1
+    assert AuditLog.objects.filter(
+    transaction__idempotency_key=idempotency_key
+    ).count() == 1
 
 @pytest.mark.django_db
 def test_deposit_idempotency(user,wallets):
@@ -121,6 +128,9 @@ def test_deposit_idempotency(user,wallets):
     assert first_transaction == second_transaction
     assert Transaction.objects.filter(
         idempotency_key=idempotency_key
+    ).count() == 1
+    assert AuditLog.objects.filter(
+    transaction__idempotency_key=idempotency_key
     ).count() == 1
 
 @pytest.mark.django_db
@@ -171,10 +181,10 @@ def test_transfer(user,wallets,wallets_2):
     assert destination_entry.amount == Decimal("50") 
 
 @pytest.mark.django_db
-def test_transfer_insufficent_balance(user,wallets,wallets_2):
+def test_transfer_insufficient_balance(user,wallets,wallets_2):
     source_wallet=wallets[Wallet.Currency.USDT]
     destination_wallet=wallets_2[Wallet.Currency.USDT]
-    with pytest.raises(ValueError,match="Insufficent wallet balance.",):
+    with pytest.raises(ValueError,match="Insufficient wallet balance.",):
         transfer(
                 source_wallet=source_wallet,
                 destination_wallet=destination_wallet,
@@ -215,6 +225,9 @@ def test_transfer_idempotency(user,wallets,wallets_2):
     assert source_wallet.balance == Decimal("50")
     assert destination_wallet.balance == Decimal("100")
     assert first_transaction== second_transaction
+    assert AuditLog.objects.filter(
+    transaction__idempotency_key=idempotency_key
+    ).count() == 1
 
 @pytest.mark.parametrize(
     "amount",
@@ -483,3 +496,442 @@ def test_get_recent_recipients_excludes_failed_transfers(create_transfer,wallets
         currency=Wallet.Currency.USDT
     )
     assert list(recent_recipients) == []
+
+@pytest.mark.django_db
+def test_transfer_rolls_back_when_audit_log_fails(user,wallets,wallets_2):
+    source_wallet=wallets[Wallet.Currency.USDT]
+    destination_wallet=wallets_2[Wallet.Currency.USDT]
+    source_wallet.balance=Decimal("150")
+    source_wallet.save(update_fields=["balance"])
+    destination_wallet.balance=Decimal("20")
+    destination_wallet.save(update_fields=["balance"])
+    idempotency_key=uuid.uuid4()
+    with patch(  # noqa: SIM117
+        "apps.transactions.audit.AuditLog.objects.create",
+        side_effect=RuntimeError("Audit log write failed."),
+    ):
+        with pytest.raises(RuntimeError, match="Audit log write failed"):
+            transfer(
+                source_wallet=source_wallet,
+                destination_wallet=destination_wallet,
+                amount=Decimal("50"),
+                idempotency_key=idempotency_key,
+                initiated_by=user,
+            )
+    source_wallet.refresh_from_db()
+    destination_wallet.refresh_from_db()
+    assert source_wallet.balance == Decimal("150")
+    assert destination_wallet.balance == Decimal("20")
+
+    assert not Transaction.objects.filter(
+        idempotency_key=idempotency_key
+    ).exists()
+
+    assert not LedgerEntry.objects.filter(
+        transaction__idempotency_key=idempotency_key
+    ).exists()
+
+@pytest.mark.django_db
+def test_transfer_creates_audit_log(user,wallets,wallets_2):
+    source_wallet=wallets[Wallet.Currency.USDT]
+    destination_wallet=wallets_2[Wallet.Currency.USDT]
+    source_wallet.balance=Decimal("150")
+    source_wallet.save(update_fields=["balance"])
+    destination_wallet.balance=Decimal("20")
+    destination_wallet.save(update_fields=["balance"])
+    idempotency_key=uuid.uuid4()
+    transaction=transfer(
+            source_wallet=source_wallet,
+            destination_wallet=destination_wallet,
+            amount=Decimal("50"),
+            idempotency_key=idempotency_key,
+            initiated_by=user,
+            )
+    audit_log=AuditLog.objects.get(transaction=transaction)
+    assert audit_log.actor == user
+    assert audit_log.action == AuditLog.Action.TRANSFER
+    assert audit_log.transaction == transaction
+    assert AuditLog.objects.filter(transaction=transaction).count() == 1
+    assert audit_log.details["status"] == Transaction.TransactionStatus.COMPLETED
+    assert audit_log.details["source_wallet_id"] == source_wallet.pk
+    assert audit_log.details["destination_wallet_id"] == destination_wallet.pk
+    assert audit_log.details["amount"] == "50"
+    assert audit_log.details["currency"] == source_wallet.currency
+
+@pytest.mark.django_db
+def test_deposit_creates_audit_log(user,wallets):
+    wallet=wallets[Wallet.Currency.USDT]
+    wallet.balance=Decimal("150")
+    wallet.save(update_fields=["balance"])
+    idempotency_key=uuid.uuid4()
+    transaction=deposit(
+            wallet=wallet,
+            amount=Decimal("50"),
+            idempotency_key=idempotency_key,
+            initiated_by=user,
+            )
+    audit_log=AuditLog.objects.get(transaction=transaction)
+    assert audit_log.actor == user
+    assert audit_log.action == AuditLog.Action.DEPOSIT
+    assert audit_log.transaction == transaction
+    assert AuditLog.objects.filter(transaction=transaction).count() == 1
+    assert audit_log.details["status"] == Transaction.TransactionStatus.COMPLETED
+    assert audit_log.details["wallet_id"] == wallet.pk
+    assert audit_log.details["amount"] == "50"
+    assert audit_log.details["currency"] == wallet.currency
+
+@pytest.mark.django_db
+def test_withdraw_creates_audit_log(user,wallets):
+    wallet=wallets[Wallet.Currency.USDT]
+    wallet.balance=Decimal("150")
+    wallet.save(update_fields=["balance"])
+    idempotency_key=uuid.uuid4()
+    transaction=withdraw(
+            wallet=wallet,
+            amount=Decimal("50"),
+            idempotency_key=idempotency_key,
+            initiated_by=user,
+            )
+    audit_log=AuditLog.objects.get(transaction=transaction)
+    assert audit_log.actor == user
+    assert audit_log.action == AuditLog.Action.WITHDRAW
+    assert audit_log.transaction == transaction
+    assert AuditLog.objects.filter(transaction=transaction).count() == 1
+    assert audit_log.details["status"] == Transaction.TransactionStatus.COMPLETED
+    assert audit_log.details["wallet_id"] == wallet.pk
+    assert audit_log.details["amount"] == "50"
+    assert audit_log.details["currency"] == wallet.currency
+
+@pytest.mark.django_db
+def test_deposit_rolls_back_when_audit_log_fails(user,wallets):
+    wallet=wallets[Wallet.Currency.USDT]
+    wallet.balance=Decimal("150")
+    wallet.save(update_fields=["balance"])
+    idempotency_key=uuid.uuid4()
+    with patch(  # noqa: SIM117
+        "apps.transactions.audit.AuditLog.objects.create",
+        side_effect=RuntimeError("Audit log write failed."),
+    ):
+        with pytest.raises(RuntimeError, match="Audit log write failed"):
+            deposit(
+                wallet=wallet,
+                amount=Decimal("50"),
+                idempotency_key=idempotency_key,
+                initiated_by=user,
+            )
+    wallet.refresh_from_db()
+    assert wallet.balance == Decimal("150")
+    assert not Transaction.objects.filter(
+        idempotency_key=idempotency_key
+    ).exists()
+
+    assert not LedgerEntry.objects.filter(
+        transaction__idempotency_key=idempotency_key
+    ).exists()
+
+@pytest.mark.django_db
+def test_withdraw_rolls_back_when_audit_log_fails(user,wallets):
+    wallet=wallets[Wallet.Currency.USDT]
+    wallet.balance=Decimal("150")
+    wallet.save(update_fields=["balance"])
+    idempotency_key=uuid.uuid4()
+    with patch(  # noqa: SIM117
+        "apps.transactions.audit.AuditLog.objects.create",
+        side_effect=RuntimeError("Audit log write failed."),
+    ):
+        with pytest.raises(RuntimeError, match="Audit log write failed"):
+            withdraw(
+                wallet=wallet,
+                amount=Decimal("50"),
+                idempotency_key=idempotency_key,
+                initiated_by=user,
+            )
+    wallet.refresh_from_db()
+    assert wallet.balance == Decimal("150")
+    assert not Transaction.objects.filter(
+        idempotency_key=idempotency_key
+    ).exists()
+
+    assert not LedgerEntry.objects.filter(
+        transaction__idempotency_key=idempotency_key
+    ).exists()
+
+@pytest.mark.django_db(transaction=True)
+def test_transfer_concurrent_idempotency(wallets,user,wallets_2):
+    source_wallet=wallets[Wallet.Currency.USDT]
+    destination_wallet=wallets_2[Wallet.Currency.USDT]
+    source_wallet.balance = Decimal("1000")
+    source_wallet.save(update_fields=["balance"])
+    destination_wallet.balance = Decimal("500")
+    destination_wallet.save(update_fields=["balance"])
+    idempotency_key=uuid.uuid4()
+    barrier=Barrier(2)
+    def execute_transfer():
+        close_old_connections()
+        try:
+            barrier.wait(timeout=5)
+
+            return transfer(
+                source_wallet=source_wallet,
+                destination_wallet=destination_wallet,
+                idempotency_key=idempotency_key,
+                initiated_by=user,
+                amount=Decimal("100")
+            )
+        finally:
+            close_old_connections()
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        future1=executor.submit(execute_transfer)
+        future2=executor.submit(execute_transfer)
+
+        transaction1=future1.result(timeout=15)
+        transaction2=future2.result(timeout=15)
+    source_wallet.refresh_from_db()
+    destination_wallet.refresh_from_db()
+    assert transaction1.pk == transaction2.pk
+    assert Transaction.objects.filter(
+        idempotency_key=idempotency_key
+    ).count() == 1
+    assert AuditLog.objects.filter(
+        transaction__idempotency_key=idempotency_key
+    ).count() == 1
+    assert transaction1.transaction_type == Transaction.TransactionType.TRANSFER
+    assert source_wallet.balance == Decimal("900")
+    assert destination_wallet.balance == Decimal("600")
+    assert LedgerEntry.objects.filter(
+    transaction=transaction1
+    ).count() == 2
+
+@pytest.mark.django_db(transaction=True)
+def test_transfer_concurrent_insufficient_balance(wallets,user,wallets_2):
+    source_wallet=wallets[Wallet.Currency.USDT]
+    destination_wallet=wallets_2[Wallet.Currency.USDT]
+    source_wallet.balance = Decimal("100")
+    source_wallet.save(update_fields=["balance"])
+    destination_wallet.balance = Decimal("500")
+    destination_wallet.save(update_fields=["balance"])
+    barrier=Barrier(2)
+    def execute_transfer():
+        close_old_connections()
+        try:
+            barrier.wait(timeout=5)
+
+            return transfer(
+                source_wallet=source_wallet,
+                destination_wallet=destination_wallet,
+                idempotency_key=uuid.uuid4(),
+                initiated_by=user,
+                amount=Decimal("80")
+            )
+        finally:
+            close_old_connections()
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        future1=executor.submit(execute_transfer)
+        future2=executor.submit(execute_transfer)
+
+        results = []
+        errors = []
+
+        for future in (future1, future2):
+            try:
+                results.append(future.result(timeout=15))
+            except ValueError as exc:
+                errors.append(exc)
+
+        assert len(results) == 1
+        assert len(errors) == 1
+        assert str(errors[0]) == "Insufficient wallet balance."
+    source_wallet.refresh_from_db()
+    destination_wallet.refresh_from_db()
+    successful_transaction = results[0]
+
+    assert Transaction.objects.count() == 1
+    assert AuditLog.objects.filter(
+        transaction=successful_transaction
+    ).count() == 1
+
+    assert LedgerEntry.objects.filter(
+        transaction=successful_transaction
+    ).count() == 2
+
+    assert source_wallet.balance == Decimal("20")
+    assert destination_wallet.balance == Decimal("580")
+    assert LedgerEntry.objects.count() == 2
+
+@pytest.mark.django_db(transaction=True)
+def test_withdraw_concurrent_insufficient_balance(wallets,user):
+    wallet=wallets[Wallet.Currency.USDT]
+    wallet.balance = Decimal("100")
+    wallet.save(update_fields=["balance"])
+    barrier=Barrier(2)
+    def execute_withdraw():
+        close_old_connections()
+        try:
+            barrier.wait(timeout=5)
+
+            return withdraw(
+                wallet=wallet,
+                idempotency_key=uuid.uuid4(),
+                initiated_by=user,
+                amount=Decimal("80")
+            )
+        finally:
+            close_old_connections()
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        future1=executor.submit(execute_withdraw)
+        future2=executor.submit(execute_withdraw)
+
+        results = []
+        errors = []
+
+        for future in (future1, future2):
+            try:
+                results.append(future.result(timeout=15))
+            except ValueError as exc:
+                errors.append(exc)
+
+        assert len(results) == 1
+        assert len(errors) == 1
+        assert str(errors[0]) == "Insufficient wallet balance."
+    wallet.refresh_from_db()
+    successful_transaction = results[0]
+
+    assert Transaction.objects.count() == 1
+    assert AuditLog.objects.filter(
+        transaction=successful_transaction
+    ).count() == 1
+
+    assert LedgerEntry.objects.filter(
+        transaction=successful_transaction
+    ).count() == 1
+
+    assert wallet.balance == Decimal("20")
+    assert LedgerEntry.objects.count() == 1
+    assert successful_transaction.transaction_type == Transaction.TransactionType.WITHDRAW
+    assert successful_transaction.status == Transaction.TransactionStatus.COMPLETED
+    assert LedgerEntry.objects.filter(
+    transaction=successful_transaction,
+    entry_type=LedgerEntry.EntryType.DEBIT,
+    ).count() == 1
+@pytest.mark.django_db(transaction=True)
+def test_deposit_concurrent(wallets,user):
+    wallet=wallets[Wallet.Currency.USDT]
+    wallet.balance = Decimal("100")
+    wallet.save(update_fields=["balance"])
+    barrier=Barrier(2)
+    def execute_deposit():
+        close_old_connections()
+        try:
+            barrier.wait(timeout=5)
+
+            return deposit(
+                wallet=wallet,
+                idempotency_key=uuid.uuid4(),
+                initiated_by=user,
+                amount=Decimal("80")
+            )
+        finally:
+            close_old_connections()
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        future1=executor.submit(execute_deposit)
+        future2=executor.submit(execute_deposit)
+
+        transaction1=future1.result(timeout=15)
+        transaction2=future2.result(timeout=15)
+    wallet.refresh_from_db()
+    assert Transaction.objects.count() == 2
+    assert AuditLog.objects.count() == 2
+    assert LedgerEntry.objects.count() == 2
+    assert wallet.balance == Decimal("260")
+    assert transaction1.pk != transaction2.pk
+    assert transaction1.transaction_type == Transaction.TransactionType.DEPOSIT
+    assert transaction2.transaction_type == Transaction.TransactionType.DEPOSIT
+
+    assert transaction1.status == Transaction.TransactionStatus.COMPLETED
+    assert transaction2.status == Transaction.TransactionStatus.COMPLETED
+    assert LedgerEntry.objects.filter(
+    transaction=transaction1,
+    entry_type=LedgerEntry.EntryType.CREDIT,
+    ).count() == 1
+@pytest.mark.django_db(transaction=True)
+def test_withdraw_concurrent_idempotency(wallets,user):
+    wallet=wallets[Wallet.Currency.USDT]
+    wallet.balance = Decimal("1000")
+    wallet.save(update_fields=["balance"])
+    idempotency_key=uuid.uuid4()
+    barrier=Barrier(2)
+    def execute_withdraw():
+        close_old_connections()
+        try:
+            barrier.wait(timeout=5)
+
+            return withdraw(
+                wallet=wallet,
+                idempotency_key=idempotency_key,
+                initiated_by=user,
+                amount=Decimal("600")
+            )
+        finally:
+            close_old_connections()
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        future1=executor.submit(execute_withdraw)
+        future2=executor.submit(execute_withdraw)
+        transaction1=future1.result(timeout=15)
+        transaction2=future2.result(timeout=15)
+    wallet.refresh_from_db()
+    assert transaction1.pk == transaction2.pk
+    assert Transaction.objects.filter(
+        idempotency_key=idempotency_key
+    ).count() == 1
+    assert AuditLog.objects.filter(
+        transaction__idempotency_key=idempotency_key
+    ).count() == 1
+    assert transaction1.transaction_type == Transaction.TransactionType.WITHDRAW
+    assert wallet.balance == Decimal("400")
+    assert LedgerEntry.objects.filter(
+    transaction=transaction1
+    ).count() == 1
+
+@pytest.mark.django_db(transaction=True)
+def test_deposit_concurrent_idempotency(wallets,user):
+    wallet=wallets[Wallet.Currency.USDT]
+    wallet.balance = Decimal("1000")
+    wallet.save(update_fields=["balance"])
+    idempotency_key=uuid.uuid4()
+    barrier=Barrier(2)
+    def execute_deposit():
+        close_old_connections()
+        try:
+            barrier.wait(timeout=5)
+
+            return deposit(
+                wallet=wallet,
+                idempotency_key=idempotency_key,
+                initiated_by=user,
+                amount=Decimal("600")
+            )
+        finally:
+            close_old_connections()
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        future1=executor.submit(execute_deposit)
+        future2=executor.submit(execute_deposit)
+
+        transaction1=future1.result(timeout=15)
+        transaction2=future2.result(timeout=15)
+    wallet.refresh_from_db()
+    assert transaction1.pk == transaction2.pk
+    assert Transaction.objects.filter(
+        idempotency_key=idempotency_key
+    ).count() == 1
+    assert AuditLog.objects.filter(
+        transaction__idempotency_key=idempotency_key
+    ).count() == 1
+    assert transaction1.transaction_type == Transaction.TransactionType.DEPOSIT
+    assert wallet.balance == Decimal("1600")
+    assert LedgerEntry.objects.filter(
+    transaction=transaction1
+    ).count() == 1
+    assert LedgerEntry.objects.filter(
+    transaction=transaction1,
+    entry_type=LedgerEntry.EntryType.CREDIT,
+    ).count() == 1

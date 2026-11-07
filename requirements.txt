@@ -82,3 +82,5 @@ vine==5.1.0
 wcwidth==0.8.2
 zope.interface==8.6
 pytest-asyncio==1.4.0
+elastic-transport==8.19.0
+elasticsearch==8.19.3

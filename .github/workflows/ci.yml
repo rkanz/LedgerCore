@@ -53,7 +53,7 @@ jobs:
         run: |
           for i in $(seq 1 60); do
             if docker compose exec -T elasticsearch \
-              curl -fsS http://localhost:9200/_cluster/health \
+              curl -fsS "http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=30s" \
               > /dev/null; then
               echo "Elasticsearch is ready"
               exit 0
@@ -73,7 +73,7 @@ jobs:
 
       - name: Show logs on failure
         if: failure()
-        run: docker compose logs db redis web
+        run: docker compose logs db redis elasticsearch web
 
       - name: Shut down services
         if: always()

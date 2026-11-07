@@ -24,6 +24,7 @@ from apps.exchange.serializers import (
      ExchangeTransactionSerializer,
 )
 from apps.exchange.services import exchange
+from apps.transactions.throttles import FinancialOperationThrottle
 from apps.wallets.models import Wallet
 
 
@@ -120,6 +121,7 @@ exchange_rate_list_view=ExchangeRateListAPIView.as_view()
     ]
 )
 class ExchangeTransactionAPIView(APIView):
+    throttle_classes=[FinancialOperationThrottle]
     def post(self,request):
 
         idempotency_key_raw=request.headers.get(

@@ -205,3 +205,31 @@ def test_exchange_view_rate_not_available(
 
     assert Transaction.objects.count() == 0
     assert ExchangeTransaction.objects.count() == 0
+
+@pytest.mark.django_db
+def test_exchange_rate_limit(user,wallets,api_client,settings,exchange_rate):
+    settings.REST_FRAMEWORK = {
+        **settings.REST_FRAMEWORK,
+        "DEFAULT_THROTTLE_RATES": {
+            **settings.REST_FRAMEWORK.get("DEFAULT_THROTTLE_RATES", {}),
+            "financial_operation": "5/minute",
+        },
+    }
+    from django.core.cache import cache
+    cache.delete(f"throttle_financial_operation_{user.pk}")
+
+    for _ in range(5):
+        response=api_client.post(reverse("exchange-transaction"),{
+            "amount":"100",
+            "source_currency": "EUR",
+            "destination_currency": "USD",
+        },format="json",
+        HTTP_IDEMPOTENCY_KEY=str(uuid.uuid4()))
+        assert response.status_code == 201 # type: ignore
+    response=api_client.post(reverse("exchange-transaction"),{
+            "amount":"100",
+            "source_currency": "EUR",
+            "destination_currency": "USD",
+    },format="json",
+    HTTP_IDEMPOTENCY_KEY=str(uuid.uuid4()))
+    assert response.status_code == 429   # type: ignore
