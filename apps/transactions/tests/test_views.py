@@ -918,6 +918,14 @@ def test_transaction_history_search_tags(
     payment_tag = Tag.objects.create(name="payment")
     transaction.tags.add(payment_tag)
     index_transactions(transaction)
+    from apps.transactions.search import search_transactions
+
+    matched_ids = search_transactions("paym", user.id)
+
+    assert transaction.id in matched_ids, {
+        "transaction_id": transaction.id,
+        "matched_ids": matched_ids,
+    }
     response=api_client.get(reverse("transactions:transaction-history"),{
         "search":"paym"
     })
