@@ -1,0 +1,24 @@
+
+name: Self-hosted Runner Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-runner:
+    runs-on: [self-hosted, Windows, X64, ledgercore-local]
+
+    steps:
+      - name: Check Windows
+        run: |
+          Write-Host "Runner is working!"
+          Get-Location
+
+      - name: Check Docker
+        run: docker version
+
+      - name: Check Docker Compose
+        run: docker compose version
+
+      - name: Check Docker OS
+        run: docker info --format '{{.OSType}}'
