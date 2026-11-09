@@ -1,7 +1,9 @@
+from django.conf import settings
 from django.core.cache import cache
 from django.db import connection
 from django.http import JsonResponse
 from django.views import View
+from elasticsearch import Elasticsearch
 
 
 class HealthCheckView(View):
@@ -10,7 +12,8 @@ class HealthCheckView(View):
         health_status={
             "database":"ok",
             "status":"ok",
-            "redis":"ok"
+            "redis":"ok",
+            "elasticsearch": "ok"
         }
         try:
             with connection.cursor() as cursor:
@@ -25,8 +28,19 @@ class HealthCheckView(View):
         except Exception:  # noqa: BLE001
             health_status["status"] = "error"
             health_status ["redis"] = "error"
-        if health_status["status"] == "ok":
-            return JsonResponse(health_status, status=200)
+        es = Elasticsearch(
+            settings.ELASTICSEARCH_URL,
+            request_timeout=2,
+        )
 
-        return JsonResponse(health_status, status=503)
+        try:
+            if not es.ping():
+                health_status["elasticsearch"] = "error"
+        except Exception:  # noqa: BLE001
+            health_status["elasticsearch"] = "error"
+        finally:
+            es.close()
+        status_code = 200 if health_status["status"] == "ok" else 503
+
+        return JsonResponse(health_status, status=status_code)
 

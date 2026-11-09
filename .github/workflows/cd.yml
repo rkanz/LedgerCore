@@ -1,0 +1,32 @@
+
+name: LedgerCore CD
+
+on:
+  workflow_run:
+    workflows: ["LedgerCore CI"]
+    types:
+      - completed
+    branches:
+      - main
+
+jobs:
+  deploy:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'
+
+    runs-on: [self-hosted, Windows, X64, ledgercore-local]
+
+    steps:
+      - name: Checkout tested commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Verify Docker
+        run: |
+          docker version
+          docker compose version
+
+      # Deployment steps will be added here.
